@@ -152,9 +152,13 @@ typedef struct ref_globals_s
 {
 	qboolean developer;
 
-	// viewport width and height (physical window size)
+	// logical render size (may be rotated/scaled compared to window)
 	int      width;
 	int      height;
+
+	// physical window backbuffer size in pixels (independent of vid_rotate/vid_scale)
+	int      window_width;
+	int      window_height;
 
 	window_mode_t window_mode;
 	qboolean wideScreen;
