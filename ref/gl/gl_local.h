@@ -312,6 +312,20 @@ void DrawDecalsBatch( void );
 void R_ClearDecals( void );
 
 //
+// gl_fbo.c
+//
+void R_FBO_Init( void );
+void R_FBO_Shutdown( void );
+void R_FBO_FrameBegin( void );
+void R_FBO_BindScene( void );
+void R_FBO_Bind2D( void );
+void R_FBO_BindDefault( void );
+void R_FBO_Composite( void );
+qboolean R_FBO_IsActive( void );
+int R_FBO_Get2DWidth( void );
+int R_FBO_Get2DHeight( void );
+
+//
 // gl_draw.c
 //
 void R_Set2DMode( qboolean enable );

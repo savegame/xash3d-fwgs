@@ -135,25 +135,38 @@ void R_Set2DMode( qboolean enable )
 		if( glState.in2DMode )
 			return;
 
-		// set 2D virtual screen size
-		switch( tr.rotation )
+		if( R_FBO_IsActive() )
 		{
-		case REF_ROTATE_CW:
-			pglViewport( 0, 0, gpGlobals->height, gpGlobals->width );
-			Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->height, gpGlobals->width, 0, -99999, 99999 );
-			Matrix4x4_ConcatRotate( projection_matrix, 90, 0, 0, 1 );
-			Matrix4x4_ConcatTranslate( projection_matrix, 0, -gpGlobals->height, 0 );
-			break;
-		case REF_ROTATE_CCW:
-			pglViewport( 0, 0, gpGlobals->height, gpGlobals->width );
-			Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->height, gpGlobals->width, 0, -99999, 99999 );
-			Matrix4x4_ConcatRotate( projection_matrix, -90, 0, 0, 1 );
-			Matrix4x4_ConcatTranslate( projection_matrix, -gpGlobals->width, 0, 0 );
-			break;
-		default:
-			pglViewport( 0, 0, gpGlobals->width, gpGlobals->height );
-			Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->width, gpGlobals->height, 0, -99999, 99999 );
-			break;
+			// 2D renders into the HUD FBO at native window resolution;
+			// rotation is applied later at composite time.
+			int w = R_FBO_Get2DWidth();
+			int h = R_FBO_Get2DHeight();
+			R_FBO_Bind2D();
+			pglViewport( 0, 0, w, h );
+			Matrix4x4_CreateOrtho( projection_matrix, 0, w, h, 0, -99999, 99999 );
+		}
+		else
+		{
+			// set 2D virtual screen size
+			switch( tr.rotation )
+			{
+			case REF_ROTATE_CW:
+				pglViewport( 0, 0, gpGlobals->height, gpGlobals->width );
+				Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->height, gpGlobals->width, 0, -99999, 99999 );
+				Matrix4x4_ConcatRotate( projection_matrix, 90, 0, 0, 1 );
+				Matrix4x4_ConcatTranslate( projection_matrix, 0, -gpGlobals->height, 0 );
+				break;
+			case REF_ROTATE_CCW:
+				pglViewport( 0, 0, gpGlobals->height, gpGlobals->width );
+				Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->height, gpGlobals->width, 0, -99999, 99999 );
+				Matrix4x4_ConcatRotate( projection_matrix, -90, 0, 0, 1 );
+				Matrix4x4_ConcatTranslate( projection_matrix, -gpGlobals->width, 0, 0 );
+				break;
+			default:
+				pglViewport( 0, 0, gpGlobals->width, gpGlobals->height );
+				Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->width, gpGlobals->height, 0, -99999, 99999 );
+				break;
+			}
 		}
 
 		pglMatrixMode( GL_PROJECTION );

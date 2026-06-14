@@ -1287,6 +1287,7 @@ qboolean R_Init( void )
 	R_AliasInit();
 	R_ClearDecals();
 	R_ClearScene();
+	R_FBO_Init();
 
 	return true;
 }
@@ -1302,6 +1303,7 @@ void R_Shutdown( void )
 		return;
 
 	GL_RemoveCommands();
+	R_FBO_Shutdown();
 	R_ShutdownImages();
 #if !XASH_GLES && !XASH_GL_STATIC
 	GL2_ShimShutdown();

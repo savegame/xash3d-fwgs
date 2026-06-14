@@ -365,11 +365,11 @@ static qboolean R_SetDisplayTransform( ref_screen_rotation_t rotate, int offset_
 		ret = false;
 	}
 
-	if( scale_x != 1.0f || scale_y != 1.0f )
-	{
-		gEngfuncs.Con_Printf("scale transform not supported\n");
-		ret = false;
-	}
+	// scale is honoured by the FBO composite path (3D buffer at logical
+	// resolution, blitted to native window size). With FBO off, scale != 1
+	// is silently ignored.
+	(void)scale_x;
+	(void)scale_y;
 
 	return ret;
 }

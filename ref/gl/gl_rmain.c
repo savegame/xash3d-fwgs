@@ -552,6 +552,10 @@ void R_SetupGL( qboolean set_gl_state )
 
 	if( !set_gl_state ) return;
 
+	// when FBO path is active, 3D goes into the scene FBO in its logical
+	// orientation; rotation is applied later during composite.
+	R_FBO_BindScene();
+
 	if( !FBitSet( RI.rvp.flags, RF_DRAW_CUBEMAP ))
 	{
 		int x, x2, y, y2;
@@ -562,7 +566,9 @@ void R_SetupGL( qboolean set_gl_state )
 		y = floor( gpGlobals->height - RI.rvp.viewport[1] * gpGlobals->height / gpGlobals->height );
 		y2 = ceil( gpGlobals->height - ( RI.rvp.viewport[1] + RI.rvp.viewport[3] ) * gpGlobals->height / gpGlobals->height );
 
-		if( tr.rotation & 1 )
+		if( R_FBO_IsActive() )
+			pglViewport( x, y2, x2 - x, y - y2 );
+		else if( tr.rotation & 1 )
 			pglViewport( y2, x, y - y2, x2 - x );
 		else pglViewport( x, y2, x2 - x, y - y2 );
 	}
@@ -1048,7 +1054,20 @@ void R_BeginFrame( qboolean clearScene )
 {
 	glConfig.softwareGammaUpdate = false;	// in case of possible fails
 
-	if(( gl_clear->value || ENGINE_GET_PARM( PARM_DEV_OVERVIEW )) &&
+	R_FBO_FrameBegin();
+
+	if( R_FBO_IsActive() )
+	{
+		// clear both offscreen targets up front so HUD/scene start empty
+		R_FBO_BindDefault();
+		R_FBO_BindScene();
+		pglClearColor( 0.f, 0.f, 0.f, 1.f );
+		pglClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+		R_FBO_Bind2D();
+		pglClearColor( 0.f, 0.f, 0.f, 0.f );
+		pglClear( GL_COLOR_BUFFER_BIT );
+	}
+	else if(( gl_clear->value || ENGINE_GET_PARM( PARM_DEV_OVERVIEW )) &&
 		clearScene && ENGINE_GET_PARM( PARM_CONNSTATE ) != ca_cinematic )
 	{
 		pglClear( GL_COLOR_BUFFER_BIT );
@@ -1058,8 +1077,9 @@ void R_BeginFrame( qboolean clearScene )
 
 	R_Set2DMode( true );
 
-	// draw buffer stuff
-	pglDrawBuffer( GL_BACK );
+	// draw buffer stuff (only meaningful on default framebuffer)
+	if( !R_FBO_IsActive() )
+		pglDrawBuffer( GL_BACK );
 
 	// update texture parameters
 	if( FBitSet( gl_texture_nearest.flags|gl_lightmap_nearest.flags|gl_texture_anisotropy.flags|gl_texture_lodbias.flags, FCVAR_CHANGED ))
@@ -1137,6 +1157,10 @@ void R_EndFrame( void )
 #endif
 	// flush any remaining 2D bits
 	R_Set2DMode( false );
+
+	// blit offscreen targets to the default framebuffer (with rotation)
+	R_FBO_Composite();
+
 	gEngfuncs.GL_SwapBuffers();
 }
 
