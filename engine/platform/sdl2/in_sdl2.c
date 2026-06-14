@@ -22,6 +22,7 @@ GNU General Public License for more details.
 #include "platform_sdl2.h"
 #include "sound.h"
 #include "vid_common.h"
+#include "ref_common.h"
 
 static struct
 {
@@ -43,13 +44,34 @@ Platform_GetMousePos
 */
 void GAME_EXPORT Platform_GetMousePos( int *x, int *y )
 {
-	SDL_GetMouseState( x, y );
+	int wx, wy;
+	int ww = refState.window_width  ? refState.window_width  : refState.width;
+	int wh = refState.window_height ? refState.window_height : refState.height;
 
-	if( x )
-		*x *= refState.scale_x;
+	SDL_GetMouseState( &wx, &wy );
 
-	if( y )
-		*y *= refState.scale_y;
+	// Map window-space cursor coords to logical render-space (refState.width/height).
+	// When vid_rotate is non-zero the 3D buffer is rotated relative to the window,
+	// so we have to apply the inverse rotation and the per-axis scale separately.
+	switch( ref.rotation )
+	{
+	case REF_ROTATE_CW:   // game-top-left visually at window-top-right
+		if( x ) *x = (int)( wy * (float)refState.width  / (float)wh );
+		if( y ) *y = (int)( ( ww - wx ) * (float)refState.height / (float)ww );
+		break;
+	case REF_ROTATE_CCW:  // game-top-left visually at window-bottom-left
+		if( x ) *x = (int)( ( wh - wy ) * (float)refState.width  / (float)wh );
+		if( y ) *y = (int)( wx * (float)refState.height / (float)ww );
+		break;
+	case REF_ROTATE_UD:
+		if( x ) *x = (int)( ( ww - wx ) * (float)refState.width  / (float)ww );
+		if( y ) *y = (int)( ( wh - wy ) * (float)refState.height / (float)wh );
+		break;
+	default:
+		if( x ) *x = (int)( wx * refState.scale_x );
+		if( y ) *y = (int)( wy * refState.scale_y );
+		break;
+	}
 }
 
 /*

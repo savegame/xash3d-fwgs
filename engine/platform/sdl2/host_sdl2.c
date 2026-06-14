@@ -23,6 +23,7 @@ GNU General Public License for more details.
 #include "platform_sdl2.h"
 #include "sound.h"
 #include "vid_common.h"
+#include "ref_common.h"
 
 /*
 =============
@@ -343,6 +344,30 @@ static void SDLash_EventHandler( SDL_Event *event )
 			y /= (float)refState.height;
 			dx /= (float)refState.width;
 			dy /= (float)refState.height;
+		}
+
+		// touch arrives in window-space normalised coords. When the 3D buffer
+		// is rotated relative to the window, rotate the coords (and deltas)
+		// back into game-space so HUD/touch zones line up with what is drawn.
+		{
+			float ox = x, oy = y, odx = dx, ody = dy;
+			switch( ref.rotation )
+			{
+			case REF_ROTATE_CW:
+				x  = oy;       y  = 1.f - ox;
+				dx = ody;      dy = -odx;
+				break;
+			case REF_ROTATE_CCW:
+				x  = 1.f - oy; y  = ox;
+				dx = -ody;     dy = odx;
+				break;
+			case REF_ROTATE_UD:
+				x  = 1.f - ox; y  = 1.f - oy;
+				dx = -odx;     dy = -ody;
+				break;
+			default:
+				break;
+			}
 		}
 
 		IN_TouchEvent( type, event->tfinger.fingerId, x, y, dx, dy );
