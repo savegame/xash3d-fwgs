@@ -27,6 +27,60 @@ GNU General Public License for more details.
 
 /*
 =============
+SDLash_PickRotationForDisplay
+
+Choose a desired vid_rotate based on the current SDL window/display
+geometry. The platform window on AuroraOS/SailfishOS (and other Wayland
+compositors) is created in the display's native orientation, which may be
+portrait while the game expects a landscape framebuffer. If the window is
+portrait we rotate the 3D scene 90 degrees CW; if it's landscape we keep
+it upright. The composite pass (R_FBO_Composite) does the actual pixel
+rotation.
+
+TODO(aurora): once dlsym to libwayland-client is in, also call
+wl_surface_set_buffer_transform(WL_OUTPUT_TRANSFORM_90/270) here so the
+compositor knows our buffer's logical orientation. The compositor uses
+that for edge-gesture mapping (top-menu / minimise) — it will NOT do any
+extra rotation since we already deliver pixels in the window's native
+orientation.
+=============
+*/
+static void SDLash_AutoRotate( void )
+{
+	int w = 0, h = 0;
+	int desired;
+
+	if( !host.hWnd )
+		return;
+
+	SDL_GetWindowSize( host.hWnd, &w, &h );
+	if( w <= 0 || h <= 0 )
+		return;
+
+	if( w >= h )
+	{
+		// landscape window: 3D and window orientations match
+		desired = REF_ROTATE_NONE;
+	}
+	else
+	{
+		// portrait window: rotate 3D landscape into portrait. Choice of CW vs
+		// CCW could be refined by SDL_GetDisplayOrientation() once we observe
+		// real device behaviour on AuroraOS.
+		desired = REF_ROTATE_CW;
+	}
+
+	if( (int)Cvar_VariableValue( "vid_rotate" ) != desired )
+	{
+		char buf[8];
+		Q_snprintf( buf, sizeof( buf ), "%d", desired );
+		Cvar_Set( "vid_rotate", buf );
+		host.renderinfo_changed = true;
+	}
+}
+
+/*
+=============
 SDLash_KeyEvent
 
 =============
@@ -399,6 +453,13 @@ static void SDLash_EventHandler( SDL_Event *event )
 		break;
 #endif
 
+#if SDL_VERSION_ATLEAST( 2, 0, 9 )
+	case SDL_DISPLAYEVENT:
+		if( event->display.event == SDL_DISPLAYEVENT_ORIENTATION )
+			SDLash_AutoRotate();
+		break;
+#endif
+
 	case SDL_WINDOWEVENT:
 		if( event->window.windowID != SDL_GetWindowID( host.hWnd ) )
 			return;
@@ -431,8 +492,14 @@ static void SDLash_EventHandler( SDL_Event *event )
 			SDLash_ActiveEvent( false );
 			break;
 		case SDL_WINDOWEVENT_RESIZED:
+			SDLash_AutoRotate();
 			VID_SaveWindowSize( event->window.data1, event->window.data2 );
 			break;
+#if SDL_VERSION_ATLEAST( 2, 0, 18 )
+		case SDL_WINDOWEVENT_DISPLAY_CHANGED:
+			SDLash_AutoRotate();
+			break;
+#endif
 		case SDL_WINDOWEVENT_MAXIMIZED:
 			Cvar_DirectSet( &vid_maximized, "1" );
 			break;
