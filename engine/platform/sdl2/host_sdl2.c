@@ -394,26 +394,34 @@ static void SDLash_EventHandler( SDL_Event *event )
 
 		if( scale == 2 )
 		{
-			x /= (float)refState.width;
-			y /= (float)refState.height;
-			dx /= (float)refState.width;
-			dy /= (float)refState.height;
+			// some devices report finger position in window pixels; normalise
+			// using the physical window size (NOT refState.width/height, which
+			// may have been swapped by vid_rotate into game-space landscape).
+			int ww = refState.window_width  ? refState.window_width  : refState.width;
+			int wh = refState.window_height ? refState.window_height : refState.height;
+			x  /= (float)ww;
+			y  /= (float)wh;
+			dx /= (float)ww;
+			dy /= (float)wh;
 		}
 
-		// touch arrives in window-space normalised coords. When the 3D buffer
-		// is rotated relative to the window, rotate the coords (and deltas)
-		// back into game-space so HUD/touch zones line up with what is drawn.
+		// Coords are now in window-space normalised [0..1]. When the 3D buffer
+		// is rotated relative to the window the composite shader visually maps
+		// game(x,y) onto a rotated quad; touches must be transformed by the
+		// inverse of that mapping so HUD/touch zones line up with what is
+		// drawn. Formulas here are the algebraic inverse of FBO_MakeRotMatrix
+		// in ref/gl/gl_fbo.c — keep them in sync.
 		{
 			float ox = x, oy = y, odx = dx, ody = dy;
 			switch( ref.rotation )
 			{
 			case REF_ROTATE_CW:
-				x  = oy;       y  = 1.f - ox;
-				dx = ody;      dy = -odx;
-				break;
-			case REF_ROTATE_CCW:
 				x  = 1.f - oy; y  = ox;
 				dx = -ody;     dy = odx;
+				break;
+			case REF_ROTATE_CCW:
+				x  = oy;       y  = 1.f - ox;
+				dx = ody;      dy = -odx;
 				break;
 			case REF_ROTATE_UD:
 				x  = 1.f - ox; y  = 1.f - oy;

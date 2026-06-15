@@ -51,17 +51,17 @@ void GAME_EXPORT Platform_GetMousePos( int *x, int *y )
 	SDL_GetMouseState( &wx, &wy );
 
 	// Map window-space cursor coords to logical render-space (refState.width/height).
-	// When vid_rotate is non-zero the 3D buffer is rotated relative to the window,
-	// so we have to apply the inverse rotation and the per-axis scale separately.
+	// Formulas are the algebraic inverse of FBO_MakeRotMatrix in ref/gl/gl_fbo.c
+	// — keep them in sync with the composite shader.
 	switch( ref.rotation )
 	{
-	case REF_ROTATE_CW:   // game-top-left visually at window-top-right
-		if( x ) *x = (int)( wy * (float)refState.width  / (float)wh );
-		if( y ) *y = (int)( ( ww - wx ) * (float)refState.height / (float)ww );
-		break;
-	case REF_ROTATE_CCW:  // game-top-left visually at window-bottom-left
+	case REF_ROTATE_CW:
 		if( x ) *x = (int)( ( wh - wy ) * (float)refState.width  / (float)wh );
-		if( y ) *y = (int)( wx * (float)refState.height / (float)ww );
+		if( y ) *y = (int)( wx        * (float)refState.height / (float)ww );
+		break;
+	case REF_ROTATE_CCW:
+		if( x ) *x = (int)( wy        * (float)refState.width  / (float)wh );
+		if( y ) *y = (int)( ( ww - wx ) * (float)refState.height / (float)ww );
 		break;
 	case REF_ROTATE_UD:
 		if( x ) *x = (int)( ( ww - wx ) * (float)refState.width  / (float)ww );
