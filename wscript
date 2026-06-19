@@ -196,6 +196,9 @@ def options(opt):
 	grp.add_option('--enable-fuzzer', action = 'store_true', dest = 'ENABLE_FUZZER', default = False,
 		help = 'enable building libFuzzer runner [default: %(default)s]' )
 
+	grp.add_option('--auroraos', action = 'store_true', dest = 'AURORAOS', default = False,
+		help = 'build for Aurora OS [default: %(default)s]')
+
 	for i in SUBDIRS:
 		if not i.is_exists(opt):
 			continue
@@ -317,6 +320,14 @@ def configure(conf):
 		linkflags.append('-Wl,-undefined,error')
 	elif conf.env.SAILFISH:
 		conf.define('XASH_SAILFISH', 1)
+	
+	# Aurora OS configuration
+	if conf.options.AURORAOS:
+		conf.env.AURORAOS = True
+		conf.define('XASH_AURORAOS', 1)
+		# AuroraOS uses GLES3
+		conf.options.GLES3COMPAT = True
+		conf.options.GL = False
 
 	conf.check_cc(cflags=cflags, linkflags=linkflags, msg='Checking for required C flags')
 	conf.check_cxx(cxxflags=cxxflags, linkflags=linkflags, msg='Checking for required C++ flags')

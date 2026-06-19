@@ -68,6 +68,13 @@ static void SDLash_AutoRotate( void )
 		// CCW could be refined by SDL_GetDisplayOrientation() once we observe
 		// real device behaviour on AuroraOS.
 		desired = REF_ROTATE_CW;
+		int di = SDL_GetWindowDisplayIndex(host.hWnd);
+		int orientation = SDL_GetDisplayOrientation(di);
+		switch(orientation) {
+			case SDL_ORIENTATION_PORTRAIT_FLIPPED:
+			case SDL_ORIENTATION_LANDSCAPE:
+				desired = REF_ROTATE_CCW;
+		};
 	}
 
 	if( (int)Cvar_VariableValue( "vid_rotate" ) != desired )
@@ -412,24 +419,35 @@ static void SDLash_EventHandler( SDL_Event *event )
 		// drawn. Formulas here are the algebraic inverse of FBO_MakeRotMatrix
 		// in ref/gl/gl_fbo.c — keep them in sync.
 		{
+			// static int debugPrint = 0;
+			// debugPrint++;
 			float ox = x, oy = y, odx = dx, ody = dy;
 			switch( ref.rotation )
 			{
 			case REF_ROTATE_CW:
-				x  = 1.f - oy; y  = ox;
-				dx = -ody;     dy = odx;
+				x  = oy;  y  = 1.0 - ox;
+				dx = ody;     dy = -odx;
+				// if (debugPrint % 60 == 0)
+				// 	printf("Render rotated : REF_ROTATE_CW (90); ");
 				break;
 			case REF_ROTATE_CCW:
-				x  = oy;       y  = 1.f - ox;
-				dx = ody;      dy = -odx;
+				x  = 1.0 - oy;       y  = ox;
+				dx = -ody;      dy = odx;
+				// if (debugPrint % 60 == 0)
+				// 	printf("Render rotated : REF_ROTATE_CCW (270); ");
 				break;
 			case REF_ROTATE_UD:
 				x  = 1.f - ox; y  = 1.f - oy;
 				dx = -odx;     dy = -ody;
+				// if (debugPrint % 60 == 0)
+				// 	printf("Render rotated : REF_ROTATE_UD (180); ");
 				break;
 			default:
 				break;
 			}
+
+			// if (debugPrint % 60 == 0)
+			// 	printf("Touch pos: %f %f\n", x, y);
 		}
 
 		IN_TouchEvent( type, event->tfinger.fingerId, x, y, dx, dy );
@@ -463,8 +481,14 @@ static void SDLash_EventHandler( SDL_Event *event )
 
 #if SDL_VERSION_ATLEAST( 2, 0, 9 )
 	case SDL_DISPLAYEVENT:
-		if( event->display.event == SDL_DISPLAYEVENT_ORIENTATION )
+		if( event->display.event == SDL_DISPLAYEVENT_ORIENTATION ) {
+			// first check display native orientation
+			// int display = SDL_GetWindowDisplayIndex();
+			// SDL_Rect bounds;
+			// SDL_GetDisplayBounds(display, &bounds);
+
 			SDLash_AutoRotate();
+		}
 		break;
 #endif
 

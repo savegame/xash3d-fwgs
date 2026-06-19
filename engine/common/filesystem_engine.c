@@ -263,8 +263,16 @@ static qboolean FS_DetermineRootDirectory( char *out, size_t size )
 		Q_strncpy( out, path, size );
 		return true;
 	}
+#if XASH_AURORAOS
+	// const char *path = getenv( "HOME" );
 
-#if XASH_IOS
+	if( !COM_StringEmptyOrNULL( path ))
+	{
+		Q_strncpy( out, path, size );
+		return true;
+	}
+	return false;
+#elif XASH_IOS
 	Q_strncpy( out, IOS_GetDocsDir(), size );
 	return true;
 #elif XASH_PSVITA

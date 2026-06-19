@@ -916,9 +916,10 @@ qboolean R_Init_Video( ref_graphic_apis_t type )
 
 		SDL_SetHint( SDL_HINT_VIDEO_X11_FORCE_EGL, "1" );
 	}
-
+#ifndef XASH_AURORAOS
 	SDL_SetHint( SDL_HINT_QTWAYLAND_WINDOW_FLAGS, "OverridesSystemGestures" );
 	SDL_SetHint( SDL_HINT_QTWAYLAND_CONTENT_ORIENTATION, "landscape" );
+#endif
 	SDL_SetHint( SDL_HINT_VIDEO_X11_XRANDR, "1" );
 	SDL_SetHint( SDL_HINT_VIDEO_X11_XVIDMODE, "1" );
 
