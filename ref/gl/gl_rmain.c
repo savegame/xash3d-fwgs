@@ -401,6 +401,10 @@ static void R_SetupProjectionMatrix( matrix4x4 m )
 	xMax = zNear * tan( RI.rvp.fov_x * M_PI_F / 360.0f );
 	xMin = -xMax;
 
+#ifdef XASH_AURORAOS
+	// AuroraOS: keep 3D projection upright; FBO composite handles rotation.
+	Matrix4x4_CreateProjection( m, xMax, xMin, yMax, yMin, zNear, zFar );
+#else
 	if( tr.rotation & 1 )
 	{
 		Matrix4x4_CreateProjection( m, yMax, yMin, xMax, xMin, zNear, zFar );
@@ -409,6 +413,7 @@ static void R_SetupProjectionMatrix( matrix4x4 m )
 	{
 		Matrix4x4_CreateProjection( m, xMax, xMin, yMax, yMin, zNear, zFar );
 	}
+#endif
 }
 
 /*
@@ -419,6 +424,12 @@ R_SetupModelviewMatrix
 static void R_SetupModelviewMatrix( matrix4x4 m )
 {
 	Matrix4x4_CreateModelview( m );
+#ifdef XASH_AURORAOS
+	// AuroraOS: keep modelview upright; FBO composite handles rotation.
+	Matrix4x4_ConcatRotate( m, -RI.rvp.viewangles[2], 1, 0, 0 );
+	Matrix4x4_ConcatRotate( m, -RI.rvp.viewangles[0], 0, 1, 0 );
+	Matrix4x4_ConcatRotate( m, -RI.rvp.viewangles[1], 0, 0, 1 );
+#else
 	if( tr.rotation & 1 )
 	{
 		Matrix4x4_ConcatRotate( m, anglemod( -RI.rvp.viewangles[2] + 90 ), 1, 0, 0 );
@@ -431,6 +442,7 @@ static void R_SetupModelviewMatrix( matrix4x4 m )
 		Matrix4x4_ConcatRotate( m, -RI.rvp.viewangles[0], 0, 1, 0 );
 		Matrix4x4_ConcatRotate( m, -RI.rvp.viewangles[1], 0, 0, 1 );
 	}
+#endif
 	Matrix4x4_ConcatTranslate( m, -RI.rvp.vieworigin[0], -RI.rvp.vieworigin[1], -RI.rvp.vieworigin[2] );
 }
 
