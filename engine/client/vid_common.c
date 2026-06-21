@@ -150,11 +150,10 @@ void VID_SetDisplayTransform( int *render_w, int *render_h )
 
 	if( ref.dllFuncs.R_SetDisplayTransform( rotate, 0, 0, vid_scale.value, vid_scale.value ))
 	{
-#ifndef XASH_AURORAOS
-		// On AuroraOS the FBO composite handles rotation by sampling a
-		// landscape-sized scene texture; the render buffer itself stays
-		// at native window dimensions. Skipping the W/H swap keeps the
-		// 3D pipeline rendering in the window's actual orientation.
+		// Always swap render_w/h on a 90/270 rotation. The game DLL needs
+		// to see a logical landscape screen so it builds landscape FOV,
+		// HUD layout, etc. The FBO composite then rotates the landscape
+		// buffer back into the window's native (e.g. portrait) orientation.
 		if( rotate & 1 )
 		{
 			int swap = *render_w;
@@ -163,6 +162,9 @@ void VID_SetDisplayTransform( int *render_w, int *render_h )
 			*render_h = swap;
 		}
 
+#ifndef XASH_AURORAOS
+		// vid_scale legacy path — FBO composite would handle scaling
+		// natively, but other platforms still expect the divide here.
 		*render_h /= vid_scale.value;
 		*render_w /= vid_scale.value;
 #endif

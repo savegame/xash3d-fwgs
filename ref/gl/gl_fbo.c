@@ -306,16 +306,18 @@ void R_FBO_BindDefault( void )
 
 static void FBO_EnsureSize( void )
 {
-	int sw = gpGlobals->width;
-	int sh = gpGlobals->height;
-	int hw = gpGlobals->window_width  ? gpGlobals->window_width  : sw;
-	int hh = gpGlobals->window_height ? gpGlobals->window_height : sh;
+	// Both targets are sized to the logical render dimensions (already
+	// swapped to landscape by VID_SetDisplayTransform when vid_rotate is
+	// 90/270). The game renders 3D + HUD into landscape FBOs; the final
+	// composite rotates them into the native window orientation.
+	int w = gpGlobals->width;
+	int h = gpGlobals->height;
 
-	if( fs.scene.w != sw || fs.scene.h != sh )
-		FBO_CreateTarget( &fs.scene, sw, sh, true );
+	if( fs.scene.w != w || fs.scene.h != h )
+		FBO_CreateTarget( &fs.scene, w, h, true );
 
-	if( fs.hud.w != hw || fs.hud.h != hh )
-		FBO_CreateTarget( &fs.hud, hw, hh, false );
+	if( fs.hud.w != w || fs.hud.h != h )
+		FBO_CreateTarget( &fs.hud, w, h, false );
 }
 
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
@@ -350,13 +352,13 @@ void R_FBO_Bind2D( void )
 int R_FBO_Get2DWidth( void )
 {
 	if( fs.active && fs.hud.w ) return fs.hud.w;
-	return gpGlobals->window_width ? gpGlobals->window_width : gpGlobals->width;
+	return gpGlobals->width;
 }
 
 int R_FBO_Get2DHeight( void )
 {
 	if( fs.active && fs.hud.h ) return fs.hud.h;
-	return gpGlobals->window_height ? gpGlobals->window_height : gpGlobals->height;
+	return gpGlobals->height;
 }
 
 // =====================================================================
@@ -437,15 +439,11 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 
 void R_FBO_Composite( void )
 {
-	// STEP B: blit scene + HUD FBOs to the backbuffer with identity matrix
-	// (no rotation). Both FBOs are sized to native window dimensions so
-	// the mapping is 1:1.
-	float ident[16] = {
-		1.f, 0.f, 0.f, 0.f,
-		0.f, 1.f, 0.f, 0.f,
-		0.f, 0.f, 1.f, 0.f,
-		0.f, 0.f, 0.f, 1.f,
-	};
+	// STEP C: blit scene + HUD FBOs to the backbuffer, rotating both by
+	// tr.rotation. Both FBOs are landscape-sized (= refState.width/height);
+	// the backbuffer is native window orientation (e.g. portrait). The
+	// rotation matrix maps the landscape quad onto the portrait window.
+	float mvp[16];
 	int ww, wh;
 	GLint prev_prog = 0, prev_vao = 0, prev_buf = 0;
 	static int once = 0;
@@ -468,17 +466,19 @@ void R_FBO_Composite( void )
 	glDepthMask( GL_FALSE );
 	glDisable( GL_CULL_FACE );
 
+	FBO_MakeRotMatrix( mvp, tr.rotation );
+
 	// 1) scene — opaque
 	glDisable( GL_BLEND );
 	glUseProgram( fs.prog );
-	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, ident );
+	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, fs.scene.color );
 	glUniform1i( fs.u_tex, 0 );
 	glBindVertexArray( fs.vao );
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 
-	// 2) HUD — premultiplied-alpha overlay
+	// 2) HUD — premultiplied-alpha overlay, same rotation
 	glEnable( GL_BLEND );
 	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 	glBindTexture( GL_TEXTURE_2D, fs.hud.color );
@@ -487,10 +487,9 @@ void R_FBO_Composite( void )
 	if( !once )
 	{
 		once = 1;
-		FBO_CheckGL( "STEP B: composite" );
-		gEngfuncs.Con_Printf( S_NOTE "FBO[B]: win=%dx%d scene=%ux%u hud=%ux%u scene.tex=%u hud.tex=%u\n",
-			ww, wh, fs.scene.w, fs.scene.h, fs.hud.w, fs.hud.h,
-			fs.scene.color, fs.hud.color );
+		FBO_CheckGL( "STEP C: composite" );
+		gEngfuncs.Con_Printf( S_NOTE "FBO[C]: win=%dx%d scene=%ux%u hud=%ux%u rot=%d\n",
+			ww, wh, fs.scene.w, fs.scene.h, fs.hud.w, fs.hud.h, (int)tr.rotation );
 	}
 
 	// restore state for next frame's legacy/shim path
