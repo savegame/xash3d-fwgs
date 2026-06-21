@@ -337,6 +337,13 @@ int R_FBO_Get2DHeight( void )
 // =====================================================================
 // composite: bind backbuffer, draw scene (rotated) + hud (1:1) as quads
 // =====================================================================
+static void FBO_CheckGL( const char *where )
+{
+	GLenum e;
+	while(( e = glGetError() ) != GL_NO_ERROR )
+		gEngfuncs.Con_Printf( S_ERROR "FBO[GL]: 0x%x at %s\n", e, where );
+}
+
 static void FBO_MakeRotMatrix( float m[16], ref_screen_rotation_t rot )
 {
 	// printf("Call FBO_MakeRotMatrix: %i\n", rot);
@@ -378,6 +385,7 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 	glEnableVertexAttribArray( fs.a_uv );
 	glVertexAttribPointer( fs.a_pos, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts );
 	glVertexAttribPointer( fs.a_uv,  2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts + 2 );
+	FBO_CheckGL( "drawquad: vattr setup" );
 
 	if( blend )
 	{
@@ -393,22 +401,23 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 	glDepthMask( GL_FALSE );
 
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+	FBO_CheckGL( "drawquad: draw" );
 
 	glDisableVertexAttribArray( fs.a_pos );
 	glDisableVertexAttribArray( fs.a_uv );
-	glUseProgram( 0 );
 }
 
 void R_FBO_Composite( void )
 {
 	float mvp_scene[16], mvp_hud[16];
 	int ww, wh;
+	GLint cur_prog = 0, cur_vao = 0, cur_arr_buf = 0, cur_fb = 0;
 	static int fbo_debug = 0;
 	fbo_debug++;
 
 	if( !fs.active ) {
-		if (fbo_debug % 120) {
-			printf("[WARNING] FBO is not actove.\n");
+		if (fbo_debug % 120 == 0) {
+			printf("[WARNING] FBO is not active.\n");
 		}
 		return;
 	}
@@ -416,10 +425,30 @@ void R_FBO_Composite( void )
 	ww = gpGlobals->window_width  ? gpGlobals->window_width  : gpGlobals->width;
 	wh = gpGlobals->window_height ? gpGlobals->window_height : gpGlobals->height;
 
+	FBO_CheckGL( "composite: enter" );
+
+	// snapshot state we may collide with (gl2_shim's VAO is the prime suspect
+	// for swallowed quad draws — client-array glVertexAttribPointer with a
+	// bound VAO/VBO is undefined in GLES3).
+	glGetIntegerv( GL_CURRENT_PROGRAM, &cur_prog );
+	glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &cur_vao );
+	glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &cur_arr_buf );
+	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &cur_fb );
+	if( fbo_debug == 1 || fbo_debug % 120 == 0 )
+		gEngfuncs.Con_Printf( S_NOTE "FBO[before]: prog=%d vao=%d vbo=%d fb=%d win=%dx%d rot=%d\n",
+			cur_prog, cur_vao, cur_arr_buf, cur_fb, ww, wh, (int)tr.rotation );
+
+	if( cur_vao )     glBindVertexArray( 0 );
+	if( cur_arr_buf ) glBindBuffer( GL_ARRAY_BUFFER, 0 );
+	FBO_CheckGL( "composite: unbind vao/vbo" );
+
 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	glViewport( 0, 0, ww, wh );
-	glClearColor( 0.f, 0.f, 0.f, 1.f );
+	// GREEN clear — if you see green flashing, composite IS reaching the
+	// backbuffer; only the textured quads are missing.
+	glClearColor( 0.f, 1.f, 0.f, 1.f );
 	glClear( GL_COLOR_BUFFER_BIT );
+	FBO_CheckGL( "composite: clear backbuffer" );
 
 	FBO_MakeRotMatrix( mvp_scene, tr.rotation );
 	FBO_DrawQuad( fs.scene.color, mvp_scene, false );
@@ -431,6 +460,13 @@ void R_FBO_Composite( void )
 	glDepthMask( GL_TRUE );
 	glEnable( GL_DEPTH_TEST );
 	glDisable( GL_BLEND );
+
+	// restore state that pre-existing engine code may rely on next frame
+	if( cur_vao )     glBindVertexArray( (GLuint)cur_vao );
+	if( cur_arr_buf ) glBindBuffer( GL_ARRAY_BUFFER, (GLuint)cur_arr_buf );
+	if( cur_prog )    glUseProgram( (GLuint)cur_prog );
+	else              glUseProgram( 0 );
+	FBO_CheckGL( "composite: restore state" );
 
 	fs.active = false;
 }
