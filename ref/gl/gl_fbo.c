@@ -152,6 +152,8 @@ static qboolean FBO_BuildProgram( void )
 	fs.a_uv  = 1;
 	fs.u_mvp = glGetUniformLocation( p, "u_mvp" );
 	fs.u_tex = glGetUniformLocation( p, "u_tex" );
+	gEngfuncs.Con_Printf( S_NOTE "FBO[link]: prog=%u u_mvp=%d u_tex=%d a_pos=%d a_uv=%d\n",
+		fs.prog, fs.u_mvp, fs.u_tex, fs.a_pos, fs.a_uv );
 	return true;
 }
 
@@ -403,6 +405,23 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 	FBO_CheckGL( "drawquad: draw" );
 
+	// one-shot sanity check right after the very first quad draw
+	{
+		static int once = 0;
+		if( !once )
+		{
+			GLint p = 0, va = 0, e0 = 0, e1 = 0, bt = 0;
+			once = 1;
+			glGetIntegerv( GL_CURRENT_PROGRAM, &p );
+			glGetIntegerv( GL_ACTIVE_TEXTURE, &va );
+			glGetVertexAttribiv( fs.a_pos, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &e0 );
+			glGetVertexAttribiv( fs.a_uv,  GL_VERTEX_ATTRIB_ARRAY_ENABLED, &e1 );
+			glGetIntegerv( GL_TEXTURE_BINDING_2D, &bt );
+			gEngfuncs.Con_Printf( S_NOTE "FBO[draw]: prog=%d activeTU=0x%x e_pos=%d e_uv=%d tex=%d tex_param=%u mvp[0..3]=%.2f %.2f %.2f %.2f\n",
+				p, va, e0, e1, bt, tex, mvp[0], mvp[1], mvp[2], mvp[3] );
+		}
+	}
+
 	glDisableVertexAttribArray( fs.a_pos );
 	glDisableVertexAttribArray( fs.a_uv );
 }
@@ -435,8 +454,12 @@ void R_FBO_Composite( void )
 	glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &cur_arr_buf );
 	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &cur_fb );
 	if( fbo_debug == 1 || fbo_debug % 120 == 0 )
+	{
 		gEngfuncs.Con_Printf( S_NOTE "FBO[before]: prog=%d vao=%d vbo=%d fb=%d win=%dx%d rot=%d\n",
 			cur_prog, cur_vao, cur_arr_buf, cur_fb, ww, wh, (int)tr.rotation );
+		gEngfuncs.Con_Printf( S_NOTE "FBO[shdr]: fs.prog=%u u_mvp=%d u_tex=%d scene.color=%u hud.color=%u\n",
+			fs.prog, fs.u_mvp, fs.u_tex, fs.scene.color, fs.hud.color );
+	}
 
 	if( cur_vao )     glBindVertexArray( 0 );
 	if( cur_arr_buf ) glBindBuffer( GL_ARRAY_BUFFER, 0 );
