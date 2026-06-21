@@ -98,9 +98,7 @@ static const char *fbo_frag_src =
 	"uniform sampler2D u_tex;\n"
 	"varying vec2 v_uv;\n"
 	"void main(){\n"
-	"  // STEP A debug: show UV as colour to prove the quad reaches screen\n"
-	"  gl_FragColor = vec4(v_uv, 0.5, 1.0);\n"
-	"  // gl_FragColor = texture2D(u_tex, v_uv);\n"
+	"  gl_FragColor = texture2D(u_tex, v_uv);\n"
 	"}\n";
 
 static GLhandleARB FBO_CompileShader( GLenum type, const char *src )
@@ -323,10 +321,16 @@ static void FBO_EnsureSize( void )
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
 void R_FBO_FrameBegin( void )
 {
-	// STEP A: keep FBO inactive so the game renders straight into the
-	// default framebuffer. R_FBO_Composite will overlay a debug quad on
-	// top to prove the draw pipeline works in isolation.
 	fs.active = false;
+	if( !fs.initialized || !gl_fbo || gl_fbo->value <= 0.0f || !fs.prog )
+		return;
+
+	FBO_EnsureSize();
+	if( !fs.scene.fbo || !fs.hud.fbo )
+		return;
+
+	fs.active = true;
+	fs.saved_target = 0;
 }
 
 void R_FBO_BindScene( void )
@@ -433,50 +437,70 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 
 void R_FBO_Composite( void )
 {
-	// STEP A: minimal sanity check. Game has just finished drawing into
-	// the default framebuffer (legacy path). We overlay our shader-driven
-	// quad on top of it without touching FBOs, without clearing, and
-	// without rotating. The fragment shader outputs v_uv as colour, so a
-	// successful draw shows a coloured gradient covering the screen.
+	// STEP B: blit scene + HUD FBOs to the backbuffer with identity matrix
+	// (no rotation). Both FBOs are sized to native window dimensions so
+	// the mapping is 1:1.
 	float ident[16] = {
 		1.f, 0.f, 0.f, 0.f,
 		0.f, 1.f, 0.f, 0.f,
 		0.f, 0.f, 1.f, 0.f,
 		0.f, 0.f, 0.f, 1.f,
 	};
-	GLint prev_prog = 0, prev_vao = 0, prev_buf = 0, prev_fb = 0;
+	int ww, wh;
+	GLint prev_prog = 0, prev_vao = 0, prev_buf = 0;
 	static int once = 0;
 
-	if( !fs.prog ) return;
+	if( !fs.active ) return;
 
-	glGetIntegerv( GL_CURRENT_PROGRAM,        &prev_prog );
-	glGetIntegerv( GL_VERTEX_ARRAY_BINDING,   &prev_vao );
-	glGetIntegerv( GL_ARRAY_BUFFER_BINDING,   &prev_buf );
-	glGetIntegerv( GL_FRAMEBUFFER_BINDING,    &prev_fb );
+	ww = gpGlobals->window_width  ? gpGlobals->window_width  : gpGlobals->width;
+	wh = gpGlobals->window_height ? gpGlobals->window_height : gpGlobals->height;
 
-	// draw into whatever the game just wrote to (should be backbuffer = 0)
+	glGetIntegerv( GL_CURRENT_PROGRAM,      &prev_prog );
+	glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &prev_vao );
+	glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &prev_buf );
+
+	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	glViewport( 0, 0, ww, wh );
+	glClearColor( 0.f, 0.f, 0.f, 1.f );
+	glClear( GL_COLOR_BUFFER_BIT );
+
 	glDisable( GL_DEPTH_TEST );
 	glDepthMask( GL_FALSE );
-	glDisable( GL_BLEND );
 	glDisable( GL_CULL_FACE );
 
+	// 1) scene — opaque
+	glDisable( GL_BLEND );
 	glUseProgram( fs.prog );
 	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, ident );
-
+	glActiveTexture( GL_TEXTURE0 );
+	glBindTexture( GL_TEXTURE_2D, fs.scene.color );
+	glUniform1i( fs.u_tex, 0 );
 	glBindVertexArray( fs.vao );
+	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+
+	// 2) HUD — premultiplied-alpha overlay
+	glEnable( GL_BLEND );
+	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+	glBindTexture( GL_TEXTURE_2D, fs.hud.color );
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 
 	if( !once )
 	{
 		once = 1;
-		FBO_CheckGL( "STEP A: test quad" );
-		gEngfuncs.Con_Printf( S_NOTE "FBO[A]: prog=%u vao=%u fb_was=%d prev_prog=%d prev_vao=%d prev_buf=%d\n",
-			fs.prog, fs.vao, prev_fb, prev_prog, prev_vao, prev_buf );
+		FBO_CheckGL( "STEP B: composite" );
+		gEngfuncs.Con_Printf( S_NOTE "FBO[B]: win=%dx%d scene=%ux%u hud=%ux%u scene.tex=%u hud.tex=%u\n",
+			ww, wh, fs.scene.w, fs.scene.h, fs.hud.w, fs.hud.h,
+			fs.scene.color, fs.hud.color );
 	}
 
+	// restore state for next frame's legacy/shim path
 	glBindVertexArray( (GLuint)prev_vao );
-	if( prev_buf )  glBindBuffer( GL_ARRAY_BUFFER, (GLuint)prev_buf );
+	if( prev_buf ) glBindBuffer( GL_ARRAY_BUFFER, (GLuint)prev_buf );
 	glUseProgram( (GLuint)prev_prog );
+	glBindTexture( GL_TEXTURE_2D, 0 );
 	glDepthMask( GL_TRUE );
 	glEnable( GL_DEPTH_TEST );
+	glDisable( GL_BLEND );
+
+	fs.active = false;
 }
