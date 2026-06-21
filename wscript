@@ -325,9 +325,11 @@ def configure(conf):
 	if conf.options.AURORAOS:
 		conf.env.AURORAOS = True
 		conf.define('XASH_AURORAOS', 1)
+		linkflags.append('-lGLESv2')
 		# AuroraOS uses GLES3
 		conf.options.GLES3COMPAT = True
 		conf.options.GL = False
+		conf.options.GL4ES = False
 
 	conf.check_cc(cflags=cflags, linkflags=linkflags, msg='Checking for required C flags')
 	conf.check_cxx(cxxflags=cxxflags, linkflags=linkflags, msg='Checking for required C++ flags')

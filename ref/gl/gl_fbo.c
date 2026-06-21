@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "gl_local.h"
+#include <GLES3/gl3.h>
 
 // FBO-related enums that gl_export.h does not declare yet
 #ifndef GL_FRAMEBUFFER
@@ -66,7 +67,7 @@ typedef struct fbo_state_s
 	int         saved_target;    // 0 (backbuffer), scene.fbo or hud.fbo
 
 	// composite shader
-	GLhandleARB prog;
+	GLuint      prog;
 	GLint       u_mvp;
 	GLint       u_tex;
 	GLint       a_pos;
@@ -100,18 +101,18 @@ static const char *fbo_frag_src =
 
 static GLhandleARB FBO_CompileShader( GLenum type, const char *src )
 {
-	GLhandleARB sh = pglCreateShaderObjectARB( type );
-	GLint ok = 0, len;
+	GLuint sh = glCreateShader( type );
+	GLint ok = 0;
 
-	pglShaderSourceARB( sh, 1, (const GLcharARB **)&src, NULL );
-	pglCompileShaderARB( sh );
-	pglGetObjectParameterivARB( sh, GL_OBJECT_COMPILE_STATUS_ARB, &ok );
+	glShaderSource( sh, 1, &src, NULL );
+	glCompileShader( sh );
+	glGetShaderiv( sh, GL_COMPILE_STATUS, &ok );
 	if( !ok )
 	{
 		char log[1024] = {0};
-		pglGetInfoLogARB( sh, sizeof( log ) - 1, &len, log );
+		glGetShaderInfoLog( sh, sizeof( log ) - 1, NULL, log );
 		gEngfuncs.Con_Printf( S_ERROR "FBO: shader compile failed: %s\n", log );
-		pglDeleteObjectARB( sh );
+		glDeleteShader( sh );
 		return 0;
 	}
 	return sh;
@@ -119,39 +120,38 @@ static GLhandleARB FBO_CompileShader( GLenum type, const char *src )
 
 static qboolean FBO_BuildProgram( void )
 {
-	GLhandleARB vs, fs_, p;
-	GLint ok = 0, len;
+	GLuint vs, fs_, p;
+	GLint ok = 0;
 
-	vs = FBO_CompileShader( GL_VERTEX_SHADER_ARB, fbo_vert_src );
+	vs = FBO_CompileShader( GL_VERTEX_SHADER, fbo_vert_src );
 	if( !vs ) return false;
-	fs_ = FBO_CompileShader( GL_FRAGMENT_SHADER_ARB, fbo_frag_src );
-	if( !fs_ ) { pglDeleteObjectARB( vs ); return false; }
+	fs_ = FBO_CompileShader( GL_FRAGMENT_SHADER, fbo_frag_src );
+	if( !fs_ ) { glDeleteShader( vs ); return false; }
 
-	p = pglCreateProgramObjectARB();
-	pglAttachObjectARB( p, vs );
-	pglAttachObjectARB( p, fs_ );
-	// fixed attribute locations
-	pglBindAttribLocationARB( p, 0, "a_pos" );
-	pglBindAttribLocationARB( p, 1, "a_uv" );
-	pglLinkProgramARB( p );
-	pglDeleteObjectARB( vs );
-	pglDeleteObjectARB( fs_ );
+	p = glCreateProgram();
+	glAttachShader( p, vs );
+	glAttachShader( p, fs_ );
+	glBindAttribLocation( p, 0, "a_pos" );
+	glBindAttribLocation( p, 1, "a_uv" );
+	glLinkProgram( p );
+	glDeleteShader( vs );
+	glDeleteShader( fs_ );
 
-	pglGetObjectParameterivARB( p, GL_OBJECT_LINK_STATUS_ARB, &ok );
+	glGetProgramiv( p, GL_LINK_STATUS, &ok );
 	if( !ok )
 	{
 		char log[1024] = {0};
-		pglGetInfoLogARB( p, sizeof( log ) - 1, &len, log );
+		glGetProgramInfoLog( p, sizeof( log ) - 1, NULL, log );
 		gEngfuncs.Con_Printf( S_ERROR "FBO: program link failed: %s\n", log );
-		pglDeleteObjectARB( p );
+		glDeleteProgram( p );
 		return false;
 	}
 
 	fs.prog = p;
 	fs.a_pos = 0;
 	fs.a_uv  = 1;
-	fs.u_mvp = pglGetUniformLocationARB( p, "u_mvp" );
-	fs.u_tex = pglGetUniformLocationARB( p, "u_tex" );
+	fs.u_mvp = glGetUniformLocation( p, "u_mvp" );
+	fs.u_tex = glGetUniformLocation( p, "u_tex" );
 	return true;
 }
 
@@ -160,14 +160,15 @@ static qboolean FBO_BuildProgram( void )
 // =====================================================================
 static void FBO_DestroyTarget( fbo_target_t *t )
 {
-	if( t->fbo )   pglDeleteFramebuffers( 1, &t->fbo );
-	if( t->color ) pglDeleteTextures( 1, &t->color );
-	if( t->depth ) pglDeleteRenderbuffers( 1, &t->depth );
+	if( t->fbo )   glDeleteFramebuffers( 1, &t->fbo );
+	if( t->color ) glDeleteTextures( 1, &t->color );
+	if( t->depth ) glDeleteRenderbuffers( 1, &t->depth );
 	memset( t, 0, sizeof( *t ));
 }
 
 static qboolean FBO_CreateTarget( fbo_target_t *t, int w, int h, qboolean depth )
 {
+	printf("FBO_CreateTarget: Call create FBO target: %ix%i\n", w, h);
 	GLenum status;
 
 	if( w <= 0 || h <= 0 )
@@ -175,29 +176,29 @@ static qboolean FBO_CreateTarget( fbo_target_t *t, int w, int h, qboolean depth 
 
 	FBO_DestroyTarget( t );
 
-	pglGenFramebuffers( 1, &t->fbo );
-	pglBindFramebuffer( GL_FRAMEBUFFER, t->fbo );
+	glGenFramebuffers( 1, &t->fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, t->fbo );
 
-	pglGenTextures( 1, &t->color );
-	pglBindTexture( GL_TEXTURE_2D, t->color );
-	pglTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
-	pglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	pglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	pglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-	pglTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-	pglFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0 );
+	glGenTextures( 1, &t->color );
+	glBindTexture( GL_TEXTURE_2D, t->color );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
+	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
+	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->color, 0 );
 
 	if( depth )
 	{
-		pglGenRenderbuffers( 1, &t->depth );
-		pglBindRenderbuffer( GL_RENDERBUFFER, t->depth );
-		pglRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h );
-		pglFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t->depth );
-		pglBindRenderbuffer( GL_RENDERBUFFER, 0 );
+		glGenRenderbuffers( 1, &t->depth );
+		glBindRenderbuffer( GL_RENDERBUFFER, t->depth );
+		glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h );
+		glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, t->depth );
+		glBindRenderbuffer( GL_RENDERBUFFER, 0 );
 	}
 
-	status = pglCheckFramebufferStatus( GL_FRAMEBUFFER );
-	pglBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	status = glCheckFramebufferStatus( GL_FRAMEBUFFER );
+	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 
 	if( status != GL_FRAMEBUFFER_COMPLETE )
 	{
@@ -217,18 +218,14 @@ static qboolean FBO_CreateTarget( fbo_target_t *t, int w, int h, qboolean depth 
 // =====================================================================
 void R_FBO_Init( void )
 {
+	printf("R_FBO_Init: Start init FBO\n");
 	if( fs.initialized )
 		return;
 
 	gl_fbo = gEngfuncs.Cvar_Get( "gl_fbo", "1", FCVAR_ARCHIVE,
 		"render via offscreen FBO (1 = on, 0 = legacy direct rendering)" );
 
-	if( !pglGenFramebuffers || !pglCreateProgramObjectARB )
-	{
-		gEngfuncs.Con_Printf( S_WARN "FBO: required GL functions missing, disabling\n" );
-		gEngfuncs.Cvar_Set( "gl_fbo", "0" );
-	}
-	else if( !FBO_BuildProgram( ))
+	if( !FBO_BuildProgram( ))
 	{
 		gEngfuncs.Cvar_Set( "gl_fbo", "0" );
 	}
@@ -253,7 +250,7 @@ void R_FBO_Shutdown( void )
 	FBO_DestroyTarget( &fs.hud );
 	if( fs.prog )
 	{
-		pglDeleteObjectARB( fs.prog );
+		glDeleteProgram( fs.prog );
 		fs.prog = 0;
 	}
 	memset( &fs, 0, sizeof( fs ));
@@ -266,7 +263,7 @@ qboolean R_FBO_IsActive( void )
 
 void R_FBO_BindDefault( void )
 {
-	pglBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 }
 
 static void FBO_EnsureSize( void )
@@ -286,29 +283,42 @@ static void FBO_EnsureSize( void )
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
 void R_FBO_FrameBegin( void )
 {
+	static int debugPPP = 0;
+	debugPPP++;
 	fs.active = false;
-	if( !fs.initialized || !gl_fbo || gl_fbo->value <= 0.0f || !fs.prog )
+	if( !fs.initialized || !gl_fbo || gl_fbo->value <= 0.0f || !fs.prog ) {
+		if (debugPPP == 0 || debugPPP % 120 == 0)
+		printf("NO FBO activation!: \n   fs.initialized: %s\n   gl_fbo : %s\n   gl_fbo->value=%f\n   fs.prog: %s\n\n",
+			fs.initialized ? "true" : "flase",
+			gl_fbo ? "exist" : "null",
+			gl_fbo ? gl_fbo->value : -1,
+			fs.prog ? "ok" : "fail");
 		return;
+	}
 
 	FBO_EnsureSize();
-	if( !fs.scene.fbo || !fs.hud.fbo )
+	if( !fs.scene.fbo || !fs.hud.fbo ) {
+		printf("No FBO maafaka!\n");
 		return;
+	}
 
 	fs.active = true;
 	fs.saved_target = 0;
+	// if (debugPPP == 0 || debugPPP % 120 == 0)
+		// printf("FBO was activated!\n");
 }
 
 void R_FBO_BindScene( void )
 {
 	if( !fs.active ) return;
-	pglBindFramebuffer( GL_FRAMEBUFFER, fs.scene.fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, fs.scene.fbo );
 	fs.saved_target = fs.scene.fbo;
 }
 
 void R_FBO_Bind2D( void )
 {
 	if( !fs.active ) return;
-	pglBindFramebuffer( GL_FRAMEBUFFER, fs.hud.fbo );
+	glBindFramebuffer( GL_FRAMEBUFFER, fs.hud.fbo );
 	fs.saved_target = fs.hud.fbo;
 }
 
@@ -329,6 +339,7 @@ int R_FBO_Get2DHeight( void )
 // =====================================================================
 static void FBO_MakeRotMatrix( float m[16], ref_screen_rotation_t rot )
 {
+	// printf("Call FBO_MakeRotMatrix: %i\n", rot);
 	float c, s;
 
 	memset( m, 0, sizeof( float ) * 16 );
@@ -349,7 +360,6 @@ static void FBO_MakeRotMatrix( float m[16], ref_screen_rotation_t rot )
 
 static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 {
-	// fullscreen NDC quad: pos (xy) + uv (xy)
 	static const GLfloat verts[] = {
 		-1.f, -1.f,  0.f, 0.f,
 		 1.f, -1.f,  1.f, 0.f,
@@ -357,66 +367,70 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 		 1.f,  1.f,  1.f, 1.f,
 	};
 
-	pglUseProgramObjectARB( fs.prog );
-	pglUniformMatrix4fvARB( fs.u_mvp, 1, GL_FALSE, mvp );
+	glUseProgram( fs.prog );
+	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 
-	pglActiveTextureARB( GL_TEXTURE0_ARB );
-	pglBindTexture( GL_TEXTURE_2D, tex );
-	pglUniform1iARB( fs.u_tex, 0 );
+	glActiveTexture( GL_TEXTURE0 );
+	glBindTexture( GL_TEXTURE_2D, tex );
+	glUniform1i( fs.u_tex, 0 );
 
-	pglEnableVertexAttribArrayARB( fs.a_pos );
-	pglEnableVertexAttribArrayARB( fs.a_uv );
-	pglVertexAttribPointerARB( fs.a_pos, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts );
-	pglVertexAttribPointerARB( fs.a_uv,  2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts + 2 );
+	glEnableVertexAttribArray( fs.a_pos );
+	glEnableVertexAttribArray( fs.a_uv );
+	glVertexAttribPointer( fs.a_pos, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts );
+	glVertexAttribPointer( fs.a_uv,  2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts + 2 );
 
 	if( blend )
 	{
-		pglEnable( GL_BLEND );
-		pglBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
+		glEnable( GL_BLEND );
+		glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 	}
 	else
 	{
-		pglDisable( GL_BLEND );
+		glDisable( GL_BLEND );
 	}
 
-	pglDisable( GL_DEPTH_TEST );
-	pglDepthMask( GL_FALSE );
+	glDisable( GL_DEPTH_TEST );
+	glDepthMask( GL_FALSE );
 
-	pglDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 
-	pglDisableVertexAttribArrayARB( fs.a_pos );
-	pglDisableVertexAttribArrayARB( fs.a_uv );
-	pglUseProgramObjectARB( 0 );
+	glDisableVertexAttribArray( fs.a_pos );
+	glDisableVertexAttribArray( fs.a_uv );
+	glUseProgram( 0 );
 }
 
 void R_FBO_Composite( void )
 {
 	float mvp_scene[16], mvp_hud[16];
 	int ww, wh;
+	static int fbo_debug = 0;
+	fbo_debug++;
 
-	if( !fs.active ) return;
+	if( !fs.active ) {
+		if (fbo_debug % 120) {
+			printf("[WARNING] FBO is not actove.\n");
+		}
+		return;
+	}
 
 	ww = gpGlobals->window_width  ? gpGlobals->window_width  : gpGlobals->width;
 	wh = gpGlobals->window_height ? gpGlobals->window_height : gpGlobals->height;
 
-	pglBindFramebuffer( GL_FRAMEBUFFER, 0 );
-	pglViewport( 0, 0, ww, wh );
-	pglClearColor( 0.f, 0.f, 0.f, 1.f );
-	pglClear( GL_COLOR_BUFFER_BIT );
+	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+	glViewport( 0, 0, ww, wh );
+	glClearColor( 0.f, 0.f, 0.f, 1.f );
+	glClear( GL_COLOR_BUFFER_BIT );
 
-	// 3D scene rotated to match window orientation
 	FBO_MakeRotMatrix( mvp_scene, tr.rotation );
 	FBO_DrawQuad( fs.scene.color, mvp_scene, false );
 
-	// 2D HUD always identity (rendered at native window size)
 	FBO_MakeRotMatrix( mvp_hud, REF_ROTATE_NONE );
 	FBO_DrawQuad( fs.hud.color, mvp_hud, true );
 
-	// leave clean state for next frame
-	pglBindTexture( GL_TEXTURE_2D, 0 );
-	pglDepthMask( GL_TRUE );
-	pglEnable( GL_DEPTH_TEST );
-	pglDisable( GL_BLEND );
+	glBindTexture( GL_TEXTURE_2D, 0 );
+	glDepthMask( GL_TRUE );
+	glEnable( GL_DEPTH_TEST );
+	glDisable( GL_BLEND );
 
 	fs.active = false;
 }
