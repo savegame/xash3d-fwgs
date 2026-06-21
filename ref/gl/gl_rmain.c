@@ -566,11 +566,17 @@ void R_SetupGL( qboolean set_gl_state )
 		y = floor( gpGlobals->height - RI.rvp.viewport[1] * gpGlobals->height / gpGlobals->height );
 		y2 = ceil( gpGlobals->height - ( RI.rvp.viewport[1] + RI.rvp.viewport[3] ) * gpGlobals->height / gpGlobals->height );
 
+#ifdef XASH_AURORAOS
+		// AuroraOS: never apply legacy 3D viewport swap; rotation is
+		// handled exclusively by the FBO composite shader.
+		pglViewport( x, y2, x2 - x, y - y2 );
+#else
 		if( R_FBO_IsActive() )
 			pglViewport( x, y2, x2 - x, y - y2 );
 		else if( tr.rotation & 1 )
 			pglViewport( y2, x, y - y2, x2 - x );
 		else pglViewport( x, y2, x2 - x, y - y2 );
+#endif
 	}
 	else
 	{

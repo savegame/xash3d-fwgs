@@ -147,6 +147,12 @@ void R_Set2DMode( qboolean enable )
 		}
 		else
 		{
+#ifdef XASH_AURORAOS
+			// AuroraOS: never apply legacy 2D rotation. FBO composite is
+			// the single source of truth for screen rotation.
+			pglViewport( 0, 0, gpGlobals->width, gpGlobals->height );
+			Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->width, gpGlobals->height, 0, -99999, 99999 );
+#else
 			// set 2D virtual screen size
 			switch( tr.rotation )
 			{
@@ -167,6 +173,7 @@ void R_Set2DMode( qboolean enable )
 				Matrix4x4_CreateOrtho( projection_matrix, 0, gpGlobals->width, gpGlobals->height, 0, -99999, 99999 );
 				break;
 			}
+#endif
 		}
 
 		pglMatrixMode( GL_PROJECTION );

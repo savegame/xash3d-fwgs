@@ -98,7 +98,9 @@ static const char *fbo_frag_src =
 	"uniform sampler2D u_tex;\n"
 	"varying vec2 v_uv;\n"
 	"void main(){\n"
-	"  gl_FragColor = texture2D(u_tex, v_uv);\n"
+	"  // STEP A debug: show UV as colour to prove the quad reaches screen\n"
+	"  gl_FragColor = vec4(v_uv, 0.5, 1.0);\n"
+	"  // gl_FragColor = texture2D(u_tex, v_uv);\n"
 	"}\n";
 
 static GLhandleARB FBO_CompileShader( GLenum type, const char *src )
@@ -321,29 +323,10 @@ static void FBO_EnsureSize( void )
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
 void R_FBO_FrameBegin( void )
 {
-	static int debugPPP = 0;
-	debugPPP++;
+	// STEP A: keep FBO inactive so the game renders straight into the
+	// default framebuffer. R_FBO_Composite will overlay a debug quad on
+	// top to prove the draw pipeline works in isolation.
 	fs.active = false;
-	if( !fs.initialized || !gl_fbo || gl_fbo->value <= 0.0f || !fs.prog ) {
-		if (debugPPP == 0 || debugPPP % 120 == 0)
-		printf("NO FBO activation!: \n   fs.initialized: %s\n   gl_fbo : %s\n   gl_fbo->value=%f\n   fs.prog: %s\n\n",
-			fs.initialized ? "true" : "flase",
-			gl_fbo ? "exist" : "null",
-			gl_fbo ? gl_fbo->value : -1,
-			fs.prog ? "ok" : "fail");
-		return;
-	}
-
-	FBO_EnsureSize();
-	if( !fs.scene.fbo || !fs.hud.fbo ) {
-		printf("No FBO maafaka!\n");
-		return;
-	}
-
-	fs.active = true;
-	fs.saved_target = 0;
-	// if (debugPPP == 0 || debugPPP % 120 == 0)
-		// printf("FBO was activated!\n");
 }
 
 void R_FBO_BindScene( void )
@@ -450,66 +433,50 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 
 void R_FBO_Composite( void )
 {
-	float mvp_scene[16], mvp_hud[16];
-	int ww, wh;
-	GLint cur_prog = 0, cur_vao = 0, cur_arr_buf = 0, cur_fb = 0;
-	static int fbo_debug = 0;
-	fbo_debug++;
+	// STEP A: minimal sanity check. Game has just finished drawing into
+	// the default framebuffer (legacy path). We overlay our shader-driven
+	// quad on top of it without touching FBOs, without clearing, and
+	// without rotating. The fragment shader outputs v_uv as colour, so a
+	// successful draw shows a coloured gradient covering the screen.
+	float ident[16] = {
+		1.f, 0.f, 0.f, 0.f,
+		0.f, 1.f, 0.f, 0.f,
+		0.f, 0.f, 1.f, 0.f,
+		0.f, 0.f, 0.f, 1.f,
+	};
+	GLint prev_prog = 0, prev_vao = 0, prev_buf = 0, prev_fb = 0;
+	static int once = 0;
 
-	if( !fs.active ) {
-		if (fbo_debug % 120 == 0) {
-			printf("[WARNING] FBO is not active.\n");
-		}
-		return;
-	}
+	if( !fs.prog ) return;
 
-	ww = gpGlobals->window_width  ? gpGlobals->window_width  : gpGlobals->width;
-	wh = gpGlobals->window_height ? gpGlobals->window_height : gpGlobals->height;
+	glGetIntegerv( GL_CURRENT_PROGRAM,        &prev_prog );
+	glGetIntegerv( GL_VERTEX_ARRAY_BINDING,   &prev_vao );
+	glGetIntegerv( GL_ARRAY_BUFFER_BINDING,   &prev_buf );
+	glGetIntegerv( GL_FRAMEBUFFER_BINDING,    &prev_fb );
 
-	FBO_CheckGL( "composite: enter" );
+	// draw into whatever the game just wrote to (should be backbuffer = 0)
+	glDisable( GL_DEPTH_TEST );
+	glDepthMask( GL_FALSE );
+	glDisable( GL_BLEND );
+	glDisable( GL_CULL_FACE );
 
-	// snapshot state we may collide with (gl2_shim's VAO is the prime suspect
-	// for swallowed quad draws — client-array glVertexAttribPointer with a
-	// bound VAO/VBO is undefined in GLES3).
-	glGetIntegerv( GL_CURRENT_PROGRAM, &cur_prog );
-	glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &cur_vao );
-	glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &cur_arr_buf );
-	glGetIntegerv( GL_FRAMEBUFFER_BINDING, &cur_fb );
-	if( fbo_debug == 1 || fbo_debug % 120 == 0 )
+	glUseProgram( fs.prog );
+	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, ident );
+
+	glBindVertexArray( fs.vao );
+	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
+
+	if( !once )
 	{
-		gEngfuncs.Con_Printf( S_NOTE "FBO[before]: prog=%d vao=%d vbo=%d fb=%d win=%dx%d rot=%d\n",
-			cur_prog, cur_vao, cur_arr_buf, cur_fb, ww, wh, (int)tr.rotation );
-		gEngfuncs.Con_Printf( S_NOTE "FBO[shdr]: fs.prog=%u u_mvp=%d u_tex=%d scene.color=%u hud.color=%u\n",
-			fs.prog, fs.u_mvp, fs.u_tex, fs.scene.color, fs.hud.color );
+		once = 1;
+		FBO_CheckGL( "STEP A: test quad" );
+		gEngfuncs.Con_Printf( S_NOTE "FBO[A]: prog=%u vao=%u fb_was=%d prev_prog=%d prev_vao=%d prev_buf=%d\n",
+			fs.prog, fs.vao, prev_fb, prev_prog, prev_vao, prev_buf );
 	}
 
-	if( cur_vao )     glBindVertexArray( 0 );
-	if( cur_arr_buf ) glBindBuffer( GL_ARRAY_BUFFER, 0 );
-	FBO_CheckGL( "composite: unbind vao/vbo" );
-
-	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-	glViewport( 0, 0, ww, wh );
-	glClearColor( 0.f, 0.f, 0.f, 1.f );
-	glClear( GL_COLOR_BUFFER_BIT );
-	FBO_CheckGL( "composite: clear backbuffer" );
-
-	FBO_MakeRotMatrix( mvp_scene, tr.rotation );
-	FBO_DrawQuad( fs.scene.color, mvp_scene, false );
-
-	FBO_MakeRotMatrix( mvp_hud, REF_ROTATE_NONE );
-	FBO_DrawQuad( fs.hud.color, mvp_hud, true );
-
-	glBindTexture( GL_TEXTURE_2D, 0 );
+	glBindVertexArray( (GLuint)prev_vao );
+	if( prev_buf )  glBindBuffer( GL_ARRAY_BUFFER, (GLuint)prev_buf );
+	glUseProgram( (GLuint)prev_prog );
 	glDepthMask( GL_TRUE );
 	glEnable( GL_DEPTH_TEST );
-	glDisable( GL_BLEND );
-
-	// restore state that pre-existing engine code may rely on next frame
-	if( cur_vao )     glBindVertexArray( (GLuint)cur_vao );
-	if( cur_arr_buf ) glBindBuffer( GL_ARRAY_BUFFER, (GLuint)cur_arr_buf );
-	if( cur_prog )    glUseProgram( (GLuint)cur_prog );
-	else              glUseProgram( 0 );
-	FBO_CheckGL( "composite: restore state" );
-
-	fs.active = false;
 }

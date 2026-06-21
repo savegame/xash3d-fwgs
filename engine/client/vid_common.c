@@ -150,6 +150,11 @@ void VID_SetDisplayTransform( int *render_w, int *render_h )
 
 	if( ref.dllFuncs.R_SetDisplayTransform( rotate, 0, 0, vid_scale.value, vid_scale.value ))
 	{
+#ifndef XASH_AURORAOS
+		// On AuroraOS the FBO composite handles rotation by sampling a
+		// landscape-sized scene texture; the render buffer itself stays
+		// at native window dimensions. Skipping the W/H swap keeps the
+		// 3D pipeline rendering in the window's actual orientation.
 		if( rotate & 1 )
 		{
 			int swap = *render_w;
@@ -160,6 +165,7 @@ void VID_SetDisplayTransform( int *render_w, int *render_h )
 
 		*render_h /= vid_scale.value;
 		*render_w /= vid_scale.value;
+#endif
 
 		ref.rotation = rotate;
 	}
