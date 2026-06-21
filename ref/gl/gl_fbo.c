@@ -68,6 +68,8 @@ typedef struct fbo_state_s
 
 	// composite shader
 	GLuint      prog;
+	GLuint      vbo;             // static fullscreen quad
+	GLuint      vao;             // attribute layout for prog
 	GLint       u_mvp;
 	GLint       u_tex;
 	GLint       a_pos;
@@ -152,8 +154,40 @@ static qboolean FBO_BuildProgram( void )
 	fs.a_uv  = 1;
 	fs.u_mvp = glGetUniformLocation( p, "u_mvp" );
 	fs.u_tex = glGetUniformLocation( p, "u_tex" );
-	gEngfuncs.Con_Printf( S_NOTE "FBO[link]: prog=%u u_mvp=%d u_tex=%d a_pos=%d a_uv=%d\n",
-		fs.prog, fs.u_mvp, fs.u_tex, fs.a_pos, fs.a_uv );
+
+	// Mali GLES3 silently refuses client-array glVertexAttribPointer (no
+	// error, no draw). Allocate our own VBO + VAO so the quad always goes
+	// through the buffered path.
+	{
+		static const GLfloat verts[] = {
+			-1.f, -1.f,  0.f, 0.f,
+			 1.f, -1.f,  1.f, 0.f,
+			-1.f,  1.f,  0.f, 1.f,
+			 1.f,  1.f,  1.f, 1.f,
+		};
+		GLint prev_vao = 0, prev_vbo = 0;
+		glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &prev_vao );
+		glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &prev_vbo );
+
+		glGenBuffers( 1, &fs.vbo );
+		glBindBuffer( GL_ARRAY_BUFFER, fs.vbo );
+		glBufferData( GL_ARRAY_BUFFER, sizeof( verts ), verts, GL_STATIC_DRAW );
+
+		glGenVertexArrays( 1, &fs.vao );
+		glBindVertexArray( fs.vao );
+		glEnableVertexAttribArray( fs.a_pos );
+		glEnableVertexAttribArray( fs.a_uv );
+		glVertexAttribPointer( fs.a_pos, 2, GL_FLOAT, GL_FALSE,
+			sizeof( GLfloat ) * 4, (const void *)0 );
+		glVertexAttribPointer( fs.a_uv,  2, GL_FLOAT, GL_FALSE,
+			sizeof( GLfloat ) * 4, (const void *)( sizeof( GLfloat ) * 2 ));
+
+		glBindVertexArray( (GLuint)prev_vao );
+		glBindBuffer( GL_ARRAY_BUFFER, (GLuint)prev_vbo );
+	}
+
+	gEngfuncs.Con_Printf( S_NOTE "FBO[link]: prog=%u u_mvp=%d u_tex=%d a_pos=%d a_uv=%d vao=%u vbo=%u\n",
+		fs.prog, fs.u_mvp, fs.u_tex, fs.a_pos, fs.a_uv, fs.vao, fs.vbo );
 	return true;
 }
 
@@ -250,6 +284,8 @@ void R_FBO_Shutdown( void )
 
 	FBO_DestroyTarget( &fs.scene );
 	FBO_DestroyTarget( &fs.hud );
+	if( fs.vao ) { glDeleteVertexArrays( 1, &fs.vao ); fs.vao = 0; }
+	if( fs.vbo ) { glDeleteBuffers( 1, &fs.vbo ); fs.vbo = 0; }
 	if( fs.prog )
 	{
 		glDeleteProgram( fs.prog );
@@ -369,13 +405,6 @@ static void FBO_MakeRotMatrix( float m[16], ref_screen_rotation_t rot )
 
 static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 {
-	static const GLfloat verts[] = {
-		-1.f, -1.f,  0.f, 0.f,
-		 1.f, -1.f,  1.f, 0.f,
-		-1.f,  1.f,  0.f, 1.f,
-		 1.f,  1.f,  1.f, 1.f,
-	};
-
 	glUseProgram( fs.prog );
 	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 
@@ -383,11 +412,7 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 	glBindTexture( GL_TEXTURE_2D, tex );
 	glUniform1i( fs.u_tex, 0 );
 
-	glEnableVertexAttribArray( fs.a_pos );
-	glEnableVertexAttribArray( fs.a_uv );
-	glVertexAttribPointer( fs.a_pos, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts );
-	glVertexAttribPointer( fs.a_uv,  2, GL_FLOAT, GL_FALSE, sizeof(GLfloat)*4, verts + 2 );
-	FBO_CheckGL( "drawquad: vattr setup" );
+	glBindVertexArray( fs.vao );
 
 	if( blend )
 	{
@@ -405,25 +430,22 @@ static void FBO_DrawQuad( GLuint tex, const float mvp[16], qboolean blend )
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 	FBO_CheckGL( "drawquad: draw" );
 
-	// one-shot sanity check right after the very first quad draw
 	{
 		static int once = 0;
 		if( !once )
 		{
-			GLint p = 0, va = 0, e0 = 0, e1 = 0, bt = 0;
+			GLint p = 0, bt = 0, vaq = 0, bbuf = 0;
 			once = 1;
 			glGetIntegerv( GL_CURRENT_PROGRAM, &p );
-			glGetIntegerv( GL_ACTIVE_TEXTURE, &va );
-			glGetVertexAttribiv( fs.a_pos, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &e0 );
-			glGetVertexAttribiv( fs.a_uv,  GL_VERTEX_ATTRIB_ARRAY_ENABLED, &e1 );
 			glGetIntegerv( GL_TEXTURE_BINDING_2D, &bt );
-			gEngfuncs.Con_Printf( S_NOTE "FBO[draw]: prog=%d activeTU=0x%x e_pos=%d e_uv=%d tex=%d tex_param=%u mvp[0..3]=%.2f %.2f %.2f %.2f\n",
-				p, va, e0, e1, bt, tex, mvp[0], mvp[1], mvp[2], mvp[3] );
+			glGetIntegerv( GL_VERTEX_ARRAY_BINDING, &vaq );
+			glGetIntegerv( GL_ARRAY_BUFFER_BINDING, &bbuf );
+			gEngfuncs.Con_Printf( S_NOTE "FBO[draw]: prog=%d tex=%d vao=%d vbo=%d mvp[0..3]=%.2f %.2f %.2f %.2f\n",
+				p, bt, vaq, bbuf, mvp[0], mvp[1], mvp[2], mvp[3] );
 		}
 	}
 
-	glDisableVertexAttribArray( fs.a_pos );
-	glDisableVertexAttribArray( fs.a_uv );
+	glBindVertexArray( 0 );
 }
 
 void R_FBO_Composite( void )
@@ -467,9 +489,7 @@ void R_FBO_Composite( void )
 
 	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 	glViewport( 0, 0, ww, wh );
-	// GREEN clear — if you see green flashing, composite IS reaching the
-	// backbuffer; only the textured quads are missing.
-	glClearColor( 0.f, 1.f, 0.f, 1.f );
+	glClearColor( 0.f, 0.f, 0.f, 1.f );
 	glClear( GL_COLOR_BUFFER_BIT );
 	FBO_CheckGL( "composite: clear backbuffer" );
 
