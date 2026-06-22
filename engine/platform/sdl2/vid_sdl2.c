@@ -749,6 +749,15 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height, 
 
 	VID_Info_f();
 
+#ifdef XASH_AURORAOS
+	// Push the initial buffer-transform hint to the compositor and align
+	// vid_rotate with the freshly-created window orientation. Done here
+	// because the auto-rotate path is otherwise event-driven and may not
+	// fire on the very first frame if vid_rotate already happens to match
+	// the desired value from the persisted config.
+	Platform_AuroraNotifyWindowReady();
+#endif
+
 	return rserr_ok;
 
 cleanup:

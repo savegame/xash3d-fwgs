@@ -48,6 +48,7 @@ identical to upstream.
 */
 
 static cvar_t *gl_fbo;
+static cvar_t *r_3d_scale;     // resolution multiplier for the 3D scene FBO
 
 typedef struct fbo_target_s
 {
@@ -260,6 +261,8 @@ void R_FBO_Init( void )
 
 	gl_fbo = gEngfuncs.Cvar_Get( "gl_fbo", "1", FCVAR_ARCHIVE,
 		"render via offscreen FBO (1 = on, 0 = legacy direct rendering)" );
+	r_3d_scale = gEngfuncs.Cvar_Get( "r_3d_scale", "1.0", FCVAR_ARCHIVE,
+		"3D scene buffer scale relative to window (e.g. 0.5 = half-res 3D, 2.0 = supersample). HUD is always at native res." );
 
 	if( !FBO_BuildProgram( ))
 	{
@@ -306,18 +309,27 @@ void R_FBO_BindDefault( void )
 
 static void FBO_EnsureSize( void )
 {
-	// Both targets are sized to the logical render dimensions (already
-	// swapped to landscape by VID_SetDisplayTransform when vid_rotate is
-	// 90/270). The game renders 3D + HUD into landscape FBOs; the final
-	// composite rotates them into the native window orientation.
-	int w = gpGlobals->width;
-	int h = gpGlobals->height;
+	// HUD always at logical render resolution (= window long/short edge
+	// in landscape orientation after VID_SetDisplayTransform swap) so the
+	// 2D ortho is pixel-perfect. Scene FBO is multiplied by r_3d_scale —
+	// 0.5 to halve cost on weak GPUs, >1 to supersample. Composite
+	// quad-samples scene with GL_LINEAR so up/downscale is implicit.
+	int hw = gpGlobals->width;
+	int hh = gpGlobals->height;
+	float s = ( r_3d_scale && r_3d_scale->value > 0.1f ) ? r_3d_scale->value : 1.0f;
+	int sw, sh;
 
-	if( fs.scene.w != w || fs.scene.h != h )
-		FBO_CreateTarget( &fs.scene, w, h, true );
+	if( s > 4.0f ) s = 4.0f; // clamp to keep VRAM bounded
+	sw = (int)( hw * s + 0.5f );
+	sh = (int)( hh * s + 0.5f );
+	if( sw < 64 ) sw = 64;
+	if( sh < 64 ) sh = 64;
 
-	if( fs.hud.w != w || fs.hud.h != h )
-		FBO_CreateTarget( &fs.hud, w, h, false );
+	if( fs.scene.w != sw || fs.scene.h != sh )
+		FBO_CreateTarget( &fs.scene, sw, sh, true );
+
+	if( fs.hud.w != hw || fs.hud.h != hh )
+		FBO_CreateTarget( &fs.hud, hw, hh, false );
 }
 
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
@@ -340,6 +352,18 @@ void R_FBO_BindScene( void )
 	if( !fs.active ) return;
 	glBindFramebuffer( GL_FRAMEBUFFER, fs.scene.fbo );
 	fs.saved_target = fs.scene.fbo;
+}
+
+int R_FBO_GetSceneWidth( void )
+{
+	if( fs.active && fs.scene.w ) return fs.scene.w;
+	return gpGlobals->width;
+}
+
+int R_FBO_GetSceneHeight( void )
+{
+	if( fs.active && fs.scene.h ) return fs.scene.h;
+	return gpGlobals->height;
 }
 
 void R_FBO_Bind2D( void )

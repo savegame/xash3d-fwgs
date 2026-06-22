@@ -24,6 +24,13 @@ GNU General Public License for more details.
 void VID_RestoreScreenResolution( window_mode_t window_mode );
 void VID_SaveWindowSize( int width, int height );
 
+#ifdef XASH_AURORAOS
+//
+// host_sdl2.c
+//
+void Platform_AuroraNotifyWindowReady( void );
+#endif
+
 //
 // in_sdl.c
 //

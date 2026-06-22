@@ -571,12 +571,17 @@ void R_SetupGL( qboolean set_gl_state )
 	if( !FBitSet( RI.rvp.flags, RF_DRAW_CUBEMAP ))
 	{
 		int x, x2, y, y2;
+		// When FBO is active the scene target may be scaled by r_3d_scale,
+		// so rvp.viewport (in logical refState coords) must be remapped to
+		// scene-FBO pixel coords.
+		int sw = R_FBO_IsActive() ? R_FBO_GetSceneWidth()  : gpGlobals->width;
+		int sh = R_FBO_IsActive() ? R_FBO_GetSceneHeight() : gpGlobals->height;
 
 		// set up viewport (main, playersetup)
-		x = floor( RI.rvp.viewport[0] * gpGlobals->width / gpGlobals->width );
-		x2 = ceil(( RI.rvp.viewport[0] + RI.rvp.viewport[2] ) * gpGlobals->width / gpGlobals->width );
-		y = floor( gpGlobals->height - RI.rvp.viewport[1] * gpGlobals->height / gpGlobals->height );
-		y2 = ceil( gpGlobals->height - ( RI.rvp.viewport[1] + RI.rvp.viewport[3] ) * gpGlobals->height / gpGlobals->height );
+		x  = floor( RI.rvp.viewport[0] * sw / gpGlobals->width );
+		x2 = ceil(( RI.rvp.viewport[0] + RI.rvp.viewport[2] ) * sw / gpGlobals->width );
+		y  = floor( sh - RI.rvp.viewport[1] * sh / gpGlobals->height );
+		y2 = ceil ( sh - ( RI.rvp.viewport[1] + RI.rvp.viewport[3] ) * sh / gpGlobals->height );
 
 #ifdef XASH_AURORAOS
 		// AuroraOS: never apply legacy 3D viewport swap; rotation is

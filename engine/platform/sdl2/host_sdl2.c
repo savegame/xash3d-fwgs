@@ -30,6 +30,48 @@ GNU General Public License for more details.
 #include <SDL_syswm.h>
 #endif
 
+#ifdef XASH_AURORAOS
+// Notify the Wayland compositor about the buffer's logical orientation so
+// edge-gesture mappings (top-menu, minimise) on AuroraOS use the correct
+// edges. The compositor does NOT rotate pixels on its own — R_FBO_Composite
+// already delivers them in window-native orientation; this hint is purely
+// for the compositor's input/gesture model.
+static void SDLash_SendBufferTransform( int rotate )
+{
+	struct wl_surface *surface = NULL;
+	SDL_SysWMinfo wmInfo;
+
+	if( !host.hWnd )
+		return;
+
+	SDL_VERSION( &wmInfo.version );
+	if( !SDL_GetWindowWMInfo( host.hWnd, &wmInfo ))
+		return;
+	if( wmInfo.subsystem != SDL_SYSWM_WAYLAND )
+		return;
+
+	surface = wmInfo.info.wl.surface;
+	if( !surface )
+		return;
+
+	switch( rotate )
+	{
+	case REF_ROTATE_CW:
+		wl_surface_set_buffer_transform( surface, WL_OUTPUT_TRANSFORM_90 );
+		break;
+	case REF_ROTATE_UD:
+		wl_surface_set_buffer_transform( surface, WL_OUTPUT_TRANSFORM_180 );
+		break;
+	case REF_ROTATE_CCW:
+		wl_surface_set_buffer_transform( surface, WL_OUTPUT_TRANSFORM_270 );
+		break;
+	default:
+		wl_surface_set_buffer_transform( surface, WL_OUTPUT_TRANSFORM_NORMAL );
+		break;
+	}
+}
+#endif
+
 /*
 =============
 SDLash_PickRotationForDisplay
@@ -41,13 +83,6 @@ portrait while the game expects a landscape framebuffer. If the window is
 portrait we rotate the 3D scene 90 degrees CW; if it's landscape we keep
 it upright. The composite pass (R_FBO_Composite) does the actual pixel
 rotation.
-
-TODO(aurora): once dlsym to libwayland-client is in, also call
-wl_surface_set_buffer_transform(WL_OUTPUT_TRANSFORM_90/270) here so the
-compositor knows our buffer's logical orientation. The compositor uses
-that for edge-gesture mapping (top-menu / minimise) — it will NOT do any
-extra rotation since we already deliver pixels in the window's native
-orientation.
 =============
 */
 static void SDLash_AutoRotate( void )
@@ -94,39 +129,28 @@ static void SDLash_AutoRotate( void )
 		Q_snprintf( buf, sizeof( buf ), "%d", desired );
 		Cvar_Set( "vid_rotate", buf );
 		host.renderinfo_changed = true;
+	}
 
 #ifdef XASH_AURORAOS
-		struct wl_surface *surface = NULL;
-		SDL_SysWMinfo wmInfo;
-		SDL_VERSION(&wmInfo.version);
-		if (SDL_GetWindowWMInfo(host.hWnd, &wmInfo)) {
-			if (wmInfo.subsystem == SDL_SYSWM_WAYLAND) {
-				surface = wmInfo.info.wl.surface;
-			}
-		}
-
-		if (surface) {
-			switch (desired) {
-			case REF_ROTATE_CCW:
-				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_270\n");
-				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_270);
-				break;
-			case REF_ROTATE_NONE:
-				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_NORMAL\n");
-				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_NORMAL);
-				break;
-			case REF_ROTATE_CW:
-				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_90\n");
-				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_90);
-				break;
-			case REF_ROTATE_UD:
-				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_180\n");
-				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_180);
-				break;
-			}
-		}
+	// Always (re)send buffer transform — even on the very first call where
+	// the cvar already matches `desired`, the compositor still needs the
+	// hint after window creation.
+	SDLash_SendBufferTransform( desired );
 #endif
-	}
+}
+
+/*
+=============
+Platform_AuroraNotifyWindowReady
+
+Called from vid_sdl2.c right after the SDL window is created so that the
+buffer transform hint reaches the compositor on first frame, regardless
+of whether vid_rotate happens to already match the desired orientation.
+=============
+*/
+void Platform_AuroraNotifyWindowReady( void )
+{
+	SDLash_AutoRotate();
 }
 
 /*

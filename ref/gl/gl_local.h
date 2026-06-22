@@ -324,6 +324,8 @@ void R_FBO_Composite( void );
 qboolean R_FBO_IsActive( void );
 int R_FBO_Get2DWidth( void );
 int R_FBO_Get2DHeight( void );
+int R_FBO_GetSceneWidth( void );
+int R_FBO_GetSceneHeight( void );
 
 //
 // gl_draw.c
