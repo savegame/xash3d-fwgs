@@ -44,13 +44,270 @@ Later stages will add: resource-path checker, mod selector, About tab.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <pwd.h>
+
+#include <string>
+#include <vector>
+#include <algorithm>
 
 namespace {
 
 SDL_Window    *g_window  = nullptr;
 SDL_GLContext  g_context = nullptr;
 bool           g_owned   = false; // true while launcher still owns the window/context
+
+// ----------------------------------------------------------------------
+// Resource path picker state
+// ----------------------------------------------------------------------
+struct PickerState
+{
+	std::string current_dir; // directory currently shown in the browser
+	std::string selected;    // last confirmed pick (the resource root)
+	bool        browser_open = false;
+	bool        valid_pick   = false; // selected points at a working HL gamedir
+};
+
+PickerState g_picker;
+
+// SDL touch-drag → ImGui scroll. We DO NOT translate finger motion into
+// mouse motion (would cause buttons to drag-select). Instead a drag
+// becomes MouseWheel pulses applied to whatever ImGui window is hovered;
+// a tap (no significant motion) emits a single mouse-button down+up at
+// the original finger position.
+struct TouchState
+{
+	bool  active     = false;
+	float start_x    = 0.f, start_y = 0.f;
+	float last_x     = 0.f, last_y = 0.f;
+	float total_dist = 0.f;
+};
+TouchState g_touch;
+float      g_scroll_pending_px = 0.f;
+
+// ----------------------------------------------------------------------
+// Validation: does `dir` look like a Half-Life resource root?
+// ----------------------------------------------------------------------
+bool PathExists( const std::string &p )
+{
+	struct stat st;
+	return stat( p.c_str(), &st ) == 0;
+}
+
+bool IsDir( const std::string &p )
+{
+	struct stat st;
+	return stat( p.c_str(), &st ) == 0 && S_ISDIR( st.st_mode );
+}
+
+bool ValidateResourceDir( const std::string &dir )
+{
+	if( !IsDir( dir )) return false;
+	if( PathExists( dir + "/valve/liblist.gam" )) return true;
+	if( PathExists( dir + "/valve/gameinfo.txt" )) return true;
+	// Tolerate just having a "valve" subdir — engine will complain later
+	// but the user clearly picked something Half-Life-shaped.
+	if( IsDir( dir + "/valve" )) return true;
+	return false;
+}
+
+// ----------------------------------------------------------------------
+// Persistent config: stores the last picked resource path.
+//   $XDG_CONFIG_HOME/xash3d-fwgs/launcher.conf  (or ~/.config/...)
+// ----------------------------------------------------------------------
+std::string ConfigDir()
+{
+	const char *xdg = getenv( "XDG_CONFIG_HOME" );
+	std::string base;
+	if( xdg && *xdg ) base = xdg;
+	else
+	{
+		const char *home = getenv( "HOME" );
+		if( !home || !*home )
+		{
+			passwd *pw = getpwuid( getuid());
+			home = pw ? pw->pw_dir : "/tmp";
+		}
+		base = std::string( home ) + "/.config";
+	}
+	return base + "/xash3d-fwgs";
+}
+
+void MakeDirsP( const std::string &path )
+{
+	std::string acc;
+	for( size_t i = 1; i <= path.size(); ++i )
+	{
+		if( i == path.size() || path[i] == '/' )
+		{
+			acc.assign( path, 0, i );
+			if( !acc.empty()) mkdir( acc.c_str(), 0755 );
+		}
+	}
+}
+
+std::string ConfigFile() { return ConfigDir() + "/launcher.conf"; }
+
+std::string LoadConfigPath()
+{
+	FILE *f = fopen( ConfigFile().c_str(), "rb" );
+	if( !f ) return std::string();
+	char buf[4096] = {0};
+	size_t n = fread( buf, 1, sizeof( buf ) - 1, f );
+	fclose( f );
+	while( n > 0 && ( buf[n-1] == '\n' || buf[n-1] == '\r' || buf[n-1] == ' ' )) --n;
+	return std::string( buf, n );
+}
+
+void SaveConfigPath( const std::string &p )
+{
+	MakeDirsP( ConfigDir());
+	FILE *f = fopen( ConfigFile().c_str(), "wb" );
+	if( !f ) return;
+	fwrite( p.data(), 1, p.size(), f );
+	fputc( '\n', f );
+	fclose( f );
+}
+
+// Best-effort fallback when no config saved yet.
+std::string DefaultStartDir()
+{
+	const char *home = getenv( "HOME" );
+	if( !home || !*home )
+	{
+		passwd *pw = getpwuid( getuid());
+		home = pw ? pw->pw_dir : "/";
+	}
+	// Aurora maps user storage to ~/Downloads / ~/Documents.
+	if( IsDir( std::string( home ) + "/Downloads" )) return std::string( home ) + "/Downloads";
+	if( IsDir( std::string( home ) + "/Documents" )) return std::string( home ) + "/Documents";
+	return std::string( home );
+}
+
+// ----------------------------------------------------------------------
+// Touch event handling — tap vs drag decision.
+// ----------------------------------------------------------------------
+void ProcessTouchEvent( const SDL_Event &in, int win_w, int win_h )
+{
+	if( in.type != SDL_FINGERDOWN && in.type != SDL_FINGERUP && in.type != SDL_FINGERMOTION )
+		return;
+
+	float fx = in.tfinger.x;
+	float fy = in.tfinger.y;
+	if( fx > 1.0f || fy > 1.0f )
+	{
+		fx /= (float)win_w;
+		fy /= (float)win_h;
+	}
+	float px = fx * (float)win_w;
+	float py = fy * (float)win_h;
+
+	const float TAP_THRESHOLD = 16.f;
+
+	if( in.type == SDL_FINGERDOWN )
+	{
+		g_touch.active     = true;
+		g_touch.start_x    = px;
+		g_touch.start_y    = py;
+		g_touch.last_x     = px;
+		g_touch.last_y     = py;
+		g_touch.total_dist = 0.f;
+
+		// Move ImGui mouse to finger position so hover-test picks the right
+		// window for any subsequent scroll deltas.
+		SDL_Event mv = {};
+		mv.type = SDL_MOUSEMOTION;
+		mv.motion.timestamp = in.tfinger.timestamp;
+		mv.motion.which     = SDL_TOUCH_MOUSEID;
+		mv.motion.x         = (int)px;
+		mv.motion.y         = (int)py;
+		SDL_PushEvent( &mv );
+	}
+	else if( in.type == SDL_FINGERMOTION && g_touch.active )
+	{
+		float dx = px - g_touch.last_x;
+		float dy = py - g_touch.last_y;
+		g_touch.total_dist += sqrtf( dx * dx + dy * dy );
+		g_touch.last_x = px;
+		g_touch.last_y = py;
+		// Once the finger has clearly moved we treat the gesture as scroll.
+		if( g_touch.total_dist >= TAP_THRESHOLD )
+			g_scroll_pending_px += dy;
+	}
+	else if( in.type == SDL_FINGERUP && g_touch.active )
+	{
+		if( g_touch.total_dist < TAP_THRESHOLD )
+		{
+			// Tap — emit down+up at original position so ImGui registers a click.
+			SDL_Event d = {};
+			d.type = SDL_MOUSEBUTTONDOWN;
+			d.button.timestamp = in.tfinger.timestamp;
+			d.button.which     = SDL_TOUCH_MOUSEID;
+			d.button.button    = SDL_BUTTON_LEFT;
+			d.button.state     = SDL_PRESSED;
+			d.button.clicks    = 1;
+			d.button.x         = (int)g_touch.start_x;
+			d.button.y         = (int)g_touch.start_y;
+			SDL_PushEvent( &d );
+
+			SDL_Event u = d;
+			u.type = SDL_MOUSEBUTTONUP;
+			u.button.state = SDL_RELEASED;
+			SDL_PushEvent( &u );
+		}
+		g_touch.active = false;
+	}
+}
+
+void ApplyPendingScroll()
+{
+	if( g_scroll_pending_px == 0.f ) return;
+	ImGuiIO &io = ImGui::GetIO();
+	// Convert pixel delta to wheel ticks. ImGui scrolls about
+	// GetFontSize() pixels per tick; tuning factor for finger feel.
+	const float px_per_tick = 28.f;
+	io.MouseWheel += g_scroll_pending_px / px_per_tick;
+	g_scroll_pending_px = 0.f;
+}
+
+// ----------------------------------------------------------------------
+// Directory listing helper (subdirectories only).
+// ----------------------------------------------------------------------
+std::vector<std::string> ListSubdirs( const std::string &dir )
+{
+	std::vector<std::string> out;
+	DIR *d = opendir( dir.c_str());
+	if( !d ) return out;
+	dirent *ent;
+	while(( ent = readdir( d )))
+	{
+		const char *n = ent->d_name;
+		if( n[0] == '.' && ( n[1] == 0 || ( n[1] == '.' && n[2] == 0 ))) continue; // skip . and ..
+		if( n[0] == '.' ) continue; // skip hidden
+		std::string full = dir + "/" + n;
+		if( IsDir( full )) out.push_back( n );
+	}
+	closedir( d );
+	std::sort( out.begin(), out.end(), []( const std::string &a, const std::string &b )
+	{
+		return strcasecmp( a.c_str(), b.c_str()) < 0;
+	});
+	return out;
+}
+
+std::string ParentOf( const std::string &dir )
+{
+	if( dir.empty() || dir == "/" ) return "/";
+	size_t s = dir.find_last_of( '/' );
+	if( s == std::string::npos ) return "/";
+	if( s == 0 ) return "/";
+	return dir.substr( 0, s );
+}
 
 // Mirror the GL attribute set the engine's gles3compat path will request
 // inside R_GetSafeGLConfig (ref/gl/gl_opengl.c). Keep these in sync.
@@ -75,67 +332,146 @@ void SetGLAttributesForEngine()
 	SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 );
 }
 
-// SDL_FINGER* → SDL_MOUSE* shim. The vanilla ImGui SDL2 backend understands
-// mouse events only, so we synthesise mouse motion/button events from the
-// first finger. Single-touch is enough for our launcher widgets.
-void RewriteTouchToMouseEvent( const SDL_Event &in, int win_w, int win_h )
+void DrawDirectoryBrowser( int win_w, int win_h )
 {
-	if( in.type != SDL_FINGERDOWN && in.type != SDL_FINGERUP && in.type != SDL_FINGERMOTION )
-		return;
+	if( !g_picker.browser_open ) return;
 
-	// Tap coordinates arrive normalised [0..1] in window space.
-	float fx = in.tfinger.x;
-	float fy = in.tfinger.y;
-	if( fx > 1.0f || fy > 1.0f )
+	const float fs = ImGui::GetFontSize();
+	ImGui::SetNextWindowPos(  ImVec2( fs * 0.5f, fs * 0.5f ));
+	ImGui::SetNextWindowSize( ImVec2( win_w - fs, win_h - fs ));
+	ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar
+		| ImGuiWindowFlags_NoResize
+		| ImGuiWindowFlags_NoMove
+		| ImGuiWindowFlags_NoCollapse
+		| ImGuiWindowFlags_NoSavedSettings;
+	ImGui::Begin( "##browser", nullptr, flags );
+
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( fs * 0.6f, fs * 0.5f ));
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing,  ImVec2( fs * 0.4f, fs * 0.6f ));
+
+	ImGui::Text( "Текущий путь:" );
+	ImGui::TextWrapped( "%s", g_picker.current_dir.c_str());
+	ImGui::Spacing();
+
+	const float row_h = fs * 3.f;
+	const float btn_w = fs * 8.f;
+
+	if( ImGui::Button( "Вверх", ImVec2( btn_w, row_h )))
+		g_picker.current_dir = ParentOf( g_picker.current_dir );
+	ImGui::SameLine();
+	if( ImGui::Button( "Выбрать эту папку", ImVec2( fs * 14.f, row_h )))
 	{
-		// Some drivers (notably AuroraOS) report pixel coords; normalise.
-		fx = fx / (float)win_w;
-		fy = fy / (float)win_h;
+		g_picker.selected   = g_picker.current_dir;
+		g_picker.valid_pick = ValidateResourceDir( g_picker.selected );
+		g_picker.browser_open = false;
 	}
-	int px = (int)( fx * win_w );
-	int py = (int)( fy * win_h );
+	ImGui::SameLine();
+	if( ImGui::Button( "Отмена", ImVec2( btn_w, row_h )))
+		g_picker.browser_open = false;
 
-	SDL_Event out;
-	SDL_zero( out );
+	ImGui::Separator();
 
-	if( in.type == SDL_FINGERMOTION )
+	// Scrollable list of subdirectories — every entry is a big touch target.
+	ImGui::BeginChild( "##dir_list", ImVec2( 0, 0 ), false,
+		ImGuiWindowFlags_AlwaysVerticalScrollbar );
+
+	auto subs = ListSubdirs( g_picker.current_dir );
+	for( const auto &name : subs )
 	{
-		out.type = SDL_MOUSEMOTION;
-		out.motion.timestamp = in.tfinger.timestamp;
-		out.motion.windowID  = 0;
-		out.motion.which     = SDL_TOUCH_MOUSEID;
-		out.motion.state     = SDL_BUTTON_LMASK;
-		out.motion.x         = px;
-		out.motion.y         = py;
-		out.motion.xrel      = 0;
-		out.motion.yrel      = 0;
-		SDL_PushEvent( &out );
-		return;
+		if( ImGui::Button( name.c_str(), ImVec2( -1, row_h )))
+		{
+			std::string next = g_picker.current_dir;
+			if( next != "/" ) next += "/";
+			next += name;
+			g_picker.current_dir = next;
+		}
 	}
 
-	// Down/up — emit motion first so ImGui hover state lands on the right widget,
-	// then the button event itself.
-	SDL_Event move;
-	SDL_zero( move );
-	move.type = SDL_MOUSEMOTION;
-	move.motion.timestamp = in.tfinger.timestamp;
-	move.motion.windowID  = 0;
-	move.motion.which     = SDL_TOUCH_MOUSEID;
-	move.motion.state     = SDL_BUTTON_LMASK;
-	move.motion.x = px;
-	move.motion.y = py;
-	SDL_PushEvent( &move );
+	ImGui::EndChild();
 
-	out.type = ( in.type == SDL_FINGERDOWN ) ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
-	out.button.timestamp = in.tfinger.timestamp;
-	out.button.windowID  = 0;
-	out.button.which     = SDL_TOUCH_MOUSEID;
-	out.button.button    = SDL_BUTTON_LEFT;
-	out.button.state     = ( in.type == SDL_FINGERDOWN ) ? SDL_PRESSED : SDL_RELEASED;
-	out.button.clicks    = 1;
-	out.button.x         = px;
-	out.button.y         = py;
-	SDL_PushEvent( &out );
+	ImGui::PopStyleVar( 2 );
+	ImGui::End();
+}
+
+void DrawTab_Game( bool &keep_running, bool &user_quit, int win_w, int win_h )
+{
+	const float fs    = ImGui::GetFontSize();
+	const float btn_w = fs * 16.f;
+	const float btn_h = fs * 3.5f;
+
+	ImGui::Text( "Путь к ресурсам:" );
+	ImGui::TextWrapped( "%s", g_picker.selected.empty()
+		? "(не выбран)"
+		: g_picker.selected.c_str());
+
+	ImGui::Spacing();
+	if( ImGui::Button( "Выбрать папку...", ImVec2( fs * 14.f, btn_h )))
+	{
+		g_picker.current_dir = g_picker.selected.empty()
+			? DefaultStartDir()
+			: g_picker.selected;
+		g_picker.browser_open = true;
+	}
+
+	ImGui::Spacing();
+	if( g_picker.selected.empty())
+	{
+		ImGui::TextColored( ImVec4( 0.9f, 0.7f, 0.2f, 1.f ),
+			"Выберите папку с игрой Half-Life (содержит valve/...)" );
+	}
+	else if( g_picker.valid_pick )
+	{
+		ImGui::TextColored( ImVec4( 0.4f, 0.9f, 0.4f, 1.f ),
+			"Ресурсы найдены." );
+	}
+	else
+	{
+		ImGui::TextColored( ImVec4( 0.95f, 0.4f, 0.4f, 1.f ),
+			"В выбранной папке не найдено valve/liblist.gam." );
+	}
+
+	ImGui::Dummy( ImVec2( 0, fs * 1.f ));
+
+	const bool can_continue = !g_picker.selected.empty() && g_picker.valid_pick;
+	ImGui::BeginDisabled( !can_continue );
+	ImGui::SetCursorPosX(( win_w - btn_w ) * 0.5f );
+	if( ImGui::Button( "Начать игру", ImVec2( btn_w, btn_h * 1.2f )))
+	{
+		keep_running = false;
+		user_quit    = false;
+	}
+	ImGui::EndDisabled();
+
+	ImGui::SetCursorPosX(( win_w - btn_w ) * 0.5f );
+	if( ImGui::Button( "Выход", ImVec2( btn_w, btn_h )))
+	{
+		keep_running = false;
+		user_quit    = true;
+	}
+}
+
+void DrawTab_About()
+{
+	ImGui::TextWrapped(
+		"Xash3D-FWGS — open-source реимплементация движка GoldSrc от Valve.\n\n"
+		"Этот порт собран для AuroraOS / SailfishOS." );
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::TextWrapped(
+		"Лицензия движка: GPLv3.\n"
+		"Исходный код: https://github.com/FWGS/xash3d-fwgs\n\n"
+		"Half-Life (c) Valve Software. Ресурсы игры не распространяются с этим приложением — приобретайте Half-Life легально (например, в Steam) и укажите путь к установленной игре во вкладке Игра." );
+	ImGui::Spacing();
+	ImGui::TextWrapped(
+		"Программа предоставляется AS IS, без каких-либо гарантий." );
+	ImGui::Spacing();
+	ImGui::Separator();
+	ImGui::Spacing();
+	ImGui::TextWrapped(
+		"Сторонние компоненты:\n"
+		"  Dear ImGui (c) Omar Cornut, MIT license\n"
+		"  imfilebrowser.h (c) AirGuanZ, MIT license (если используется)" );
 }
 
 void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
@@ -152,33 +488,33 @@ void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
 
 	ImGui::Begin( "##launcher", nullptr, flags );
 
-	const float fs    = ImGui::GetFontSize();
-	const float btn_w = fs * 14.f;
-	const float btn_h = fs * 4.f;
-
-	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding,  ImVec2( fs * 1.4f, fs * 0.8f ));
-	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing,   ImVec2( fs * 0.5f, fs * 0.8f ));
+	const float fs = ImGui::GetFontSize();
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( fs * 1.0f, fs * 0.6f ));
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing,  ImVec2( fs * 0.5f, fs * 0.6f ));
 
 	ImVec2 hdr = ImGui::CalcTextSize( "Xash3D launcher (AuroraOS)" );
-	ImGui::SetCursorPos( ImVec2(( win_w - hdr.x ) * 0.5f, fs * 2.f ));
+	ImGui::SetCursorPos( ImVec2(( win_w - hdr.x ) * 0.5f, fs * 1.2f ));
 	ImGui::TextUnformatted( "Xash3D launcher (AuroraOS)" );
 
-	ImGui::SetCursorPos( ImVec2(( win_w - btn_w ) * 0.5f, win_h * 0.5f - btn_h - fs * 0.4f ));
-	if( ImGui::Button( "Continue", ImVec2( btn_w, btn_h )))
+	if( ImGui::BeginTabBar( "##tabs" ))
 	{
-		keep_running = false;
-		user_quit = false;
-	}
-
-	ImGui::SetCursorPos( ImVec2(( win_w - btn_w ) * 0.5f, win_h * 0.5f + fs * 0.4f ));
-	if( ImGui::Button( "Quit",     ImVec2( btn_w, btn_h )))
-	{
-		keep_running = false;
-		user_quit = true;
+		if( ImGui::BeginTabItem( "Игра" ))
+		{
+			DrawTab_Game( keep_running, user_quit, win_w, win_h );
+			ImGui::EndTabItem();
+		}
+		if( ImGui::BeginTabItem( "О программе" ))
+		{
+			DrawTab_About();
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
 	}
 
 	ImGui::PopStyleVar( 2 );
 	ImGui::End();
+
+	DrawDirectoryBrowser( win_w, win_h );
 }
 
 } // namespace
@@ -282,6 +618,17 @@ launcher_result_t Launcher_Run( void )
 	ImGui_ImplSDL2_InitForOpenGL( g_window, g_context );
 	ImGui_ImplOpenGL3_Init( "#version 300 es" );
 
+	// Prefill the picker from the last saved config if it still points at a
+	// valid resource root.
+	{
+		std::string saved = LoadConfigPath();
+		if( !saved.empty() && ValidateResourceDir( saved ))
+		{
+			g_picker.selected   = saved;
+			g_picker.valid_pick = true;
+		}
+	}
+
 	bool keep_running = true;
 	bool user_quit    = false;
 
@@ -302,12 +649,13 @@ launcher_result_t Launcher_Run( void )
 			}
 			else if( ev.type == SDL_FINGERDOWN || ev.type == SDL_FINGERUP || ev.type == SDL_FINGERMOTION )
 			{
-				RewriteTouchToMouseEvent( ev, win_w, win_h );
+				ProcessTouchEvent( ev, win_w, win_h );
 			}
 		}
 
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplSDL2_NewFrame();
+		ApplyPendingScroll();
 		ImGui::NewFrame();
 
 		DrawLauncherUI( keep_running, user_quit, win_w, win_h );
@@ -319,6 +667,19 @@ launcher_result_t Launcher_Run( void )
 		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 
 		SDL_GL_SwapWindow( g_window );
+	}
+
+	// Hand the user's pick over to the engine. The filesystem layer reads
+	// XASH3D_BASEDIR (and on POSIX falls back to getcwd) when
+	// FS_DetermineRootDirectory runs later in Host_InitCommon, so setenv +
+	// chdir together cover both the rw root and any code that later does
+	// getcwd-based path resolution. Also persist the pick for next launch.
+	if( !user_quit && !g_picker.selected.empty() && g_picker.valid_pick )
+	{
+		setenv( "XASH3D_BASEDIR", g_picker.selected.c_str(), 1 );
+		setenv( "XASH3D_RODIR",   g_picker.selected.c_str(), 1 );
+		(void)chdir( g_picker.selected.c_str());
+		SaveConfigPath( g_picker.selected );
 	}
 
 	// Show a single "LOADING" frame before we hand control to the engine.
