@@ -44,6 +44,7 @@ Later stages will add: resource-path checker, mod selector, About tab.
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 namespace {
 
@@ -151,21 +152,26 @@ void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
 
 	ImGui::Begin( "##launcher", nullptr, flags );
 
-	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding,  ImVec2( 40, 24 ));
-	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing,   ImVec2( 12, 18 ));
+	const float fs    = ImGui::GetFontSize();
+	const float btn_w = fs * 14.f;
+	const float btn_h = fs * 4.f;
 
-	ImGui::SetCursorPos( ImVec2( win_w * 0.5f - 200, 80 ));
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding,  ImVec2( fs * 1.4f, fs * 0.8f ));
+	ImGui::PushStyleVar( ImGuiStyleVar_ItemSpacing,   ImVec2( fs * 0.5f, fs * 0.8f ));
+
+	ImVec2 hdr = ImGui::CalcTextSize( "Xash3D launcher (AuroraOS)" );
+	ImGui::SetCursorPos( ImVec2(( win_w - hdr.x ) * 0.5f, fs * 2.f ));
 	ImGui::TextUnformatted( "Xash3D launcher (AuroraOS)" );
 
-	ImGui::SetCursorPos( ImVec2( win_w * 0.5f - 200, win_h * 0.5f - 60 ));
-	if( ImGui::Button( "Continue", ImVec2( 400, 120 )))
+	ImGui::SetCursorPos( ImVec2(( win_w - btn_w ) * 0.5f, win_h * 0.5f - btn_h - fs * 0.4f ));
+	if( ImGui::Button( "Continue", ImVec2( btn_w, btn_h )))
 	{
 		keep_running = false;
 		user_quit = false;
 	}
 
-	ImGui::SetCursorPos( ImVec2( win_w * 0.5f - 200, win_h * 0.5f + 80 ));
-	if( ImGui::Button( "Quit",     ImVec2( 400, 120 )))
+	ImGui::SetCursorPos( ImVec2(( win_w - btn_w ) * 0.5f, win_h * 0.5f + fs * 0.4f ));
+	if( ImGui::Button( "Quit",     ImVec2( btn_w, btn_h )))
 	{
 		keep_running = false;
 		user_quit = true;
@@ -226,10 +232,52 @@ launcher_result_t Launcher_Run( void )
 	io.IniFilename = nullptr; // do not write imgui.ini next to the binary
 
 	ImGui::StyleColorsDark();
-	// Touch-friendly scale; refined in later stages once we read the
-	// physical DPI.
-	ImGui::GetStyle().ScaleAllSizes( 2.0f );
-	io.FontGlobalScale = 1.6f;
+
+	// Read the physical DPI so we can express UI dimensions in millimetres.
+	// SDL_GetDisplayDPI returns dots-per-inch; we convert to dots-per-mm.
+	// Fall back to a sensible default for desktop SDL drivers that don't
+	// report DPI.
+	float hdpi = 96.f, vdpi = 96.f;
+	SDL_GetDisplayDPI( SDL_GetWindowDisplayIndex( g_window ), nullptr, &hdpi, &vdpi );
+	if( vdpi <= 1.f ) vdpi = 96.f;
+	const float dots_per_mm = vdpi / 25.4f;
+
+	// 3 mm glyph height target (with Bold weight). Clamp so a buggy/zero
+	// DPI doesn't produce a microscopic or absurdly large font.
+	float font_px = 3.0f * dots_per_mm;
+	if( font_px < 14.f ) font_px = 14.f;
+	if( font_px > 96.f ) font_px = 96.f;
+
+	// Try to load the AuroraOS system Bold font. If absent, ImGui falls
+	// back to its built-in proggy font (scaled).
+	static const char *kFontPath = "/usr/share/fonts/als-hauss-variable/ALSHaussVariable-Bold.ttf";
+	static const ImWchar kRanges[] = {
+		0x0020, 0x00FF, // Latin-1 + punctuation
+		0x0400, 0x04FF, // Cyrillic
+		0x2010, 0x205E, // General Punctuation (en-dash, ellipsis, etc.)
+		0,
+	};
+
+	{
+		struct stat st;
+		if( stat( kFontPath, &st ) == 0 )
+		{
+			ImFontConfig cfg;
+			cfg.OversampleH = 2;
+			cfg.OversampleV = 1;
+			cfg.PixelSnapH  = true;
+			io.Fonts->AddFontFromFileTTF( kFontPath, font_px, &cfg, kRanges );
+		}
+		else
+		{
+			// No system font — scale built-in font to roughly the target size.
+			io.FontGlobalScale = font_px / 13.f;
+		}
+	}
+
+	// Widget metrics scaled so finger-sized buttons feel right at the
+	// device's actual DPI.
+	ImGui::GetStyle().ScaleAllSizes( font_px / 13.f );
 
 	ImGui_ImplSDL2_InitForOpenGL( g_window, g_context );
 	ImGui_ImplOpenGL3_Init( "#version 300 es" );
@@ -270,6 +318,47 @@ launcher_result_t Launcher_Run( void )
 		glClear( GL_COLOR_BUFFER_BIT );
 		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 
+		SDL_GL_SwapWindow( g_window );
+	}
+
+	// Show a single "LOADING" frame before we hand control to the engine.
+	// FS_Init + first asset load can take a noticeable second or two on a
+	// fresh device, and freezing the pressed-button frame looks broken.
+	if( !user_quit )
+	{
+		int win_w = 0, win_h = 0;
+		SDL_GetWindowSize( g_window, &win_w, &win_h );
+
+		// Drain any leftover queued events so NewFrame sees a clean state.
+		SDL_Event drain;
+		while( SDL_PollEvent( &drain ))
+			ImGui_ImplSDL2_ProcessEvent( &drain );
+
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplSDL2_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::SetNextWindowPos(  ImVec2( 0, 0 ));
+		ImGui::SetNextWindowSize( ImVec2( (float)win_w, (float)win_h ));
+		ImGuiWindowFlags wflags = ImGuiWindowFlags_NoTitleBar
+			| ImGuiWindowFlags_NoResize
+			| ImGuiWindowFlags_NoMove
+			| ImGuiWindowFlags_NoCollapse
+			| ImGuiWindowFlags_NoBringToFrontOnFocus
+			| ImGuiWindowFlags_NoSavedSettings
+			| ImGuiWindowFlags_NoScrollbar;
+		ImGui::Begin( "##loading", nullptr, wflags );
+		const char *txt = "ЗАГРУЗКА";
+		ImVec2 sz = ImGui::CalcTextSize( txt );
+		ImGui::SetCursorPos( ImVec2(( win_w - sz.x ) * 0.5f, ( win_h - sz.y ) * 0.5f ));
+		ImGui::TextUnformatted( txt );
+		ImGui::End();
+
+		ImGui::Render();
+		glViewport( 0, 0, win_w, win_h );
+		glClearColor( 0.08f, 0.08f, 0.10f, 1.0f );
+		glClear( GL_COLOR_BUFFER_BIT );
+		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 		SDL_GL_SwapWindow( g_window );
 	}
 
