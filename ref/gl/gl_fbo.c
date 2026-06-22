@@ -261,7 +261,7 @@ void R_FBO_Init( void )
 
 	gl_fbo = gEngfuncs.Cvar_Get( "gl_fbo", "1", FCVAR_ARCHIVE,
 		"render via offscreen FBO (1 = on, 0 = legacy direct rendering)" );
-	r_3d_scale = gEngfuncs.Cvar_Get( "r_3d_scale", "1.0", FCVAR_ARCHIVE,
+	r_3d_scale = gEngfuncs.Cvar_Get( "r_3d_scale", "0.5", FCVAR_ARCHIVE,
 		"3D scene buffer scale relative to window (e.g. 0.5 = half-res 3D, 2.0 = supersample). HUD is always at native res." );
 
 	if( !FBO_BuildProgram( ))
