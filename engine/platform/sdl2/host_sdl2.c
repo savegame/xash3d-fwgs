@@ -67,13 +67,13 @@ static void SDLash_AutoRotate( void )
 		// portrait window: rotate 3D landscape into portrait. Choice of CW vs
 		// CCW could be refined by SDL_GetDisplayOrientation() once we observe
 		// real device behaviour on AuroraOS.
-		desired = REF_ROTATE_CW;
+		desired = REF_ROTATE_CCW;
 		int di = SDL_GetWindowDisplayIndex(host.hWnd);
 		int orientation = SDL_GetDisplayOrientation(di);
 		switch(orientation) {
 			case SDL_ORIENTATION_PORTRAIT_FLIPPED:
 			case SDL_ORIENTATION_LANDSCAPE:
-				desired = REF_ROTATE_CCW;
+				desired = REF_ROTATE_CW;
 		};
 	}
 
