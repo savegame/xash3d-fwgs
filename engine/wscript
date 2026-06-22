@@ -291,6 +291,20 @@ def build(bld):
 			source += bld.path.ant_glob('client/**/*.c')
 			libs += ['bzip2', 'MultiEmulator', 'opus', 'opusfile', 'vorbis', 'vorbisfile']
 
+			# AuroraOS in-process launcher (ImGui)
+			if bld.env.AURORAOS:
+				source += [
+					'launcher/launcher.cpp',
+					'launcher/imgui/imgui.cpp',
+					'launcher/imgui/imgui_draw.cpp',
+					'launcher/imgui/imgui_widgets.cpp',
+					'launcher/imgui/imgui_tables.cpp',
+					'launcher/imgui/backends/imgui_impl_sdl2.cpp',
+					'launcher/imgui/backends/imgui_impl_opengl3.cpp',
+				]
+				includes += ['launcher', 'launcher/imgui']
+				defines += ['IMGUI_IMPL_OPENGL_ES3=1']
+
 		# Android port is linked differently
 		if bld.env.DEST_OS == 'android':
 			f = bld.shlib

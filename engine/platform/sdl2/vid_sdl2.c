@@ -681,6 +681,26 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height, 
 
 	// by default we create window in windowed mode because we don't know
 	// if window creation failed because of invalid video mode or any other reason
+#ifdef XASH_AURORAOS
+	{
+		extern void *Launcher_GetWindow( void );
+		extern void *Launcher_GetGLContext( void );
+		extern void  Launcher_ReleaseOwnership( void );
+
+		void *preWin = Launcher_GetWindow();
+		void *preCtx = Launcher_GetGLContext();
+		if( preWin && preCtx && !glw_state.software )
+		{
+			// Adopt the launcher's window/context as-is. AuroraOS would
+			// kill the app if we destroyed and recreated the surface.
+			host.hWnd = (SDL_Window *)preWin;
+			glw_state.context = (SDL_GLContext)preCtx;
+			Launcher_ReleaseOwnership();
+			Con_Reportf( "%s: adopted launcher SDL window and GL context\n", __func__ );
+		}
+	}
+	if( !host.hWnd )
+#endif
 	host.hWnd = SDL_CreateWindow( GI->title, rect.x, rect.y, rect.w, rect.h, flags );
 
 	if( !host.hWnd )
@@ -726,13 +746,16 @@ static rserr_t VID_CreateWindow( const int input_width, const int input_height, 
 	}
 	else
 	{
-		glw_state.context = SDL_GL_CreateContext( host.hWnd );
-
 		if( !glw_state.context )
 		{
-			Con_Printf( S_ERROR "%s: SDL_GL_CreateContext: %s\n", __func__, SDL_GetError());
-			err = rserr_invalid_context;
-			goto cleanup;
+			glw_state.context = SDL_GL_CreateContext( host.hWnd );
+
+			if( !glw_state.context )
+			{
+				Con_Printf( S_ERROR "%s: SDL_GL_CreateContext: %s\n", __func__, SDL_GetError());
+				err = rserr_invalid_context;
+				goto cleanup;
+			}
 		}
 
 		if( SDL_GL_MakeCurrent( host.hWnd, glw_state.context ) < 0 )

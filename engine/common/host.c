@@ -1084,6 +1084,20 @@ static void Host_InitCommon( int argc, char **argv, const char *progname, qboole
 	Platform_SetupSigtermHandling();
 #endif
 	Platform_Init( Host_IsDedicated( ) || developer >= DEV_EXTENDED );
+
+#ifdef XASH_AURORAOS
+	if( !Host_IsDedicated( ))
+	{
+		// In-process launcher. Creates the SDL window + GL context so the
+		// engine can adopt them inside VID_CreateWindow without ever
+		// destroying/recreating the window (AuroraOS terminates apps whose
+		// surface is destroyed even momentarily).
+		extern int Launcher_Run( void );
+		if( Launcher_Run() != 0 )
+			Sys_Quit( "launcher requested quit" );
+	}
+#endif
+
 	FS_Init();
 
 	// print current developer level to simplify processing users feedback
