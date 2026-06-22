@@ -326,6 +326,7 @@ def configure(conf):
 		conf.env.AURORAOS = True
 		conf.define('XASH_AURORAOS', 1)
 		linkflags.append('-lGLESv2')
+		linkflags.append('-lwayland-client')
 		# AuroraOS uses GLES3
 		conf.options.GLES3COMPAT = True
 		conf.options.GL = False

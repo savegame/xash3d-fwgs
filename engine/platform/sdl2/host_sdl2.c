@@ -25,6 +25,11 @@ GNU General Public License for more details.
 #include "vid_common.h"
 #include "ref_common.h"
 
+#ifdef XASH_AURORAOS
+#include <wayland-client.h>
+#include <SDL_syswm.h>
+#endif
+
 /*
 =============
 SDLash_PickRotationForDisplay
@@ -61,6 +66,12 @@ static void SDLash_AutoRotate( void )
 	{
 		// landscape window: 3D and window orientations match
 		desired = REF_ROTATE_NONE;
+		int di = SDL_GetWindowDisplayIndex(host.hWnd);
+		int orientation = SDL_GetDisplayOrientation(di);
+		switch(orientation) {
+			case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+				desired = REF_ROTATE_UD;
+		}
 	}
 	else
 	{
@@ -83,6 +94,38 @@ static void SDLash_AutoRotate( void )
 		Q_snprintf( buf, sizeof( buf ), "%d", desired );
 		Cvar_Set( "vid_rotate", buf );
 		host.renderinfo_changed = true;
+
+#ifdef XASH_AURORAOS
+		struct wl_surface *surface = NULL;
+		SDL_SysWMinfo wmInfo;
+		SDL_VERSION(&wmInfo.version);
+		if (SDL_GetWindowWMInfo(host.hWnd, &wmInfo)) {
+			if (wmInfo.subsystem == SDL_SYSWM_WAYLAND) {
+				surface = wmInfo.info.wl.surface;
+			}
+		}
+
+		if (surface) {
+			switch (desired) {
+			case REF_ROTATE_CCW:
+				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_270\n");
+				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_270);
+				break;
+			case REF_ROTATE_NONE:
+				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_NORMAL\n");
+				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_NORMAL);
+				break;
+			case REF_ROTATE_CW:
+				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_90\n");
+				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_90);
+				break;
+			case REF_ROTATE_UD:
+				// printf("Change buffer transform to WL_OUTPUT_TRANSFORM_180\n");
+				wl_surface_set_buffer_transform(surface, WL_OUTPUT_TRANSFORM_180);
+				break;
+			}
+		}
+#endif
 	}
 }
 
@@ -424,13 +467,13 @@ static void SDLash_EventHandler( SDL_Event *event )
 			float ox = x, oy = y, odx = dx, ody = dy;
 			switch( ref.rotation )
 			{
-			case REF_ROTATE_CW:
+			case REF_ROTATE_CCW:
 				x  = oy;  y  = 1.0 - ox;
 				dx = ody;     dy = -odx;
 				// if (debugPrint % 60 == 0)
 				// 	printf("Render rotated : REF_ROTATE_CW (90); ");
 				break;
-			case REF_ROTATE_CCW:
+			case REF_ROTATE_CW:
 				x  = 1.0 - oy;       y  = ox;
 				dx = -ody;      dy = odx;
 				// if (debugPrint % 60 == 0)
