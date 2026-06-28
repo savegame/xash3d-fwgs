@@ -494,6 +494,8 @@ void R_FBO_Composite( void )
 
 	// 1) scene — opaque
 	glDisable( GL_BLEND );
+	// glClearColor(0.0, 0.0, 0.0, 1.0);
+	// glClear(GL_COLOR_BUFFER_BIT);
 	glUseProgram( fs.prog );
 	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 	glActiveTexture( GL_TEXTURE0 );

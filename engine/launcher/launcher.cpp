@@ -120,22 +120,54 @@ bool ValidateResourceDir( const std::string &dir )
 // Persistent config: stores the last picked resource path.
 //   $XDG_CONFIG_HOME/xash3d-fwgs/launcher.conf  (or ~/.config/...)
 // ----------------------------------------------------------------------
+// On AuroraOS the package sandbox only allows writes under
+//   ~/.local/share/<org>/<app>
+//   ~/.cache/<org>/<app>
+//   ~/.config/<org>/<app>
+// Compose these from the build-time defines so a packager can drop in
+// their own organisation/application identifier via wscript options.
+#ifndef XASH_AURORAOS_ORGNAME
+#define XASH_AURORAOS_ORGNAME "org.xash"
+#endif
+#ifndef XASH_AURORAOS_APPNAME
+#define XASH_AURORAOS_APPNAME "xash"
+#endif
+
+std::string HomeDir()
+{
+	const char *home = getenv( "HOME" );
+	if( !home || !*home )
+	{
+		passwd *pw = getpwuid( getuid());
+		home = pw ? pw->pw_dir : "/tmp";
+	}
+	return std::string( home );
+}
+
 std::string ConfigDir()
 {
-	const char *xdg = getenv( "XDG_CONFIG_HOME" );
-	std::string base;
-	if( xdg && *xdg ) base = xdg;
-	else
-	{
-		const char *home = getenv( "HOME" );
-		if( !home || !*home )
-		{
-			passwd *pw = getpwuid( getuid());
-			home = pw ? pw->pw_dir : "/tmp";
-		}
-		base = std::string( home ) + "/.config";
-	}
-	return base + "/xash3d-fwgs";
+	// $XDG_CONFIG_HOME normally maps to ~/.config. On AuroraOS the sandbox
+	// constrains writes under ~/.config/<org>/<app>.
+	// const char *xdg = getenv( "XDG_CONFIG_HOME" );
+	std::string base = HomeDir() + "/.config";
+	base += "/" XASH_AURORAOS_ORGNAME "/" XASH_AURORAOS_APPNAME;
+	return base;
+}
+
+std::string DataDir()
+{
+	const char *xdg = getenv( "XDG_DATA_HOME" );
+	std::string base = ( xdg && *xdg ) ? std::string( xdg )
+	                                   : HomeDir() + "/.local/share";
+	return base + "/" XASH_AURORAOS_ORGNAME "/" XASH_AURORAOS_APPNAME;
+}
+
+std::string CacheDir()
+{
+	const char *xdg = getenv( "XDG_CACHE_HOME" );
+	std::string base = ( xdg && *xdg ) ? std::string( xdg )
+	                                   : HomeDir() + "/.cache";
+	return base + "/" XASH_AURORAOS_ORGNAME "/" XASH_AURORAOS_APPNAME;
 }
 
 void MakeDirsP( const std::string &path )
@@ -354,19 +386,18 @@ void DrawDirectoryBrowser( int win_w, int win_h )
 	ImGui::Spacing();
 
 	const float row_h = fs * 3.f;
-	const float btn_w = fs * 8.f;
 
-	if( ImGui::Button( "Вверх", ImVec2( btn_w, row_h )))
-		g_picker.current_dir = ParentOf( g_picker.current_dir );
-	ImGui::SameLine();
-	if( ImGui::Button( "Выбрать эту папку", ImVec2( fs * 14.f, row_h )))
+	// Action buttons span the full width of the browser window and stack
+	// vertically — fits any phone orientation without horizontal overflow.
+	if( ImGui::Button( "Выбрать эту папку", ImVec2( -1, row_h )))
 	{
 		g_picker.selected   = g_picker.current_dir;
 		g_picker.valid_pick = ValidateResourceDir( g_picker.selected );
 		g_picker.browser_open = false;
 	}
-	ImGui::SameLine();
-	if( ImGui::Button( "Отмена", ImVec2( btn_w, row_h )))
+	if( ImGui::Button( "Вверх", ImVec2( -1, row_h )))
+		g_picker.current_dir = ParentOf( g_picker.current_dir );
+	if( ImGui::Button( "Отмена", ImVec2( -1, row_h )))
 		g_picker.browser_open = false;
 
 	ImGui::Separator();
@@ -452,6 +483,10 @@ void DrawTab_Game( bool &keep_running, bool &user_quit, int win_w, int win_h )
 
 void DrawTab_About()
 {
+	// Bump font size for the disclaimer block so it reads well at arm's
+	// length on a phone.
+	ImGui::SetWindowFontScale( 1.5f );
+
 	ImGui::TextWrapped(
 		"Xash3D-FWGS — open-source реимплементация движка GoldSrc от Valve.\n\n"
 		"Этот порт собран для AuroraOS / SailfishOS." );
@@ -472,6 +507,8 @@ void DrawTab_About()
 		"Сторонние компоненты:\n"
 		"  Dear ImGui (c) Omar Cornut, MIT license\n"
 		"  imfilebrowser.h (c) AirGuanZ, MIT license (если используется)" );
+
+	ImGui::SetWindowFontScale( 1.0f );
 }
 
 void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
@@ -669,15 +706,20 @@ launcher_result_t Launcher_Run( void )
 		SDL_GL_SwapWindow( g_window );
 	}
 
-	// Hand the user's pick over to the engine. The filesystem layer reads
-	// XASH3D_BASEDIR (and on POSIX falls back to getcwd) when
-	// FS_DetermineRootDirectory runs later in Host_InitCommon, so setenv +
-	// chdir together cover both the rw root and any code that later does
-	// getcwd-based path resolution. Also persist the pick for next launch.
+	// Hand the user's pick over to the engine.
+	//   XASH3D_BASEDIR — writable root (saves, configs, downloaded mods).
+	//     On AuroraOS this MUST stay inside the sandboxed
+	//     ~/.local/share/<org>/<app> tree.
+	//   XASH3D_RODIR   — read-only root with the game assets the user, actually get from desktop file
+	//     picked (e.g. .../Half-Life).
+	// The launcher's own config also lives in the sandbox; otherwise
+	// AuroraOS silently swallows the write and the path is lost on the
+	// next launch.
 	if( !user_quit && !g_picker.selected.empty() && g_picker.valid_pick )
 	{
 		setenv( "XASH3D_BASEDIR", g_picker.selected.c_str(), 1 );
-		setenv( "XASH3D_RODIR",   g_picker.selected.c_str(), 1 );
+		// setenv( "XASH3D_RODIR",   g_picker.selected.c_str(), 1 );
+		// XASH3D_RODIR set as -rodir flag in desktop Exec 
 		(void)chdir( g_picker.selected.c_str());
 		SaveConfigPath( g_picker.selected );
 	}

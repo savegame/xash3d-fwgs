@@ -199,6 +199,14 @@ def options(opt):
 	grp.add_option('--auroraos', action = 'store_true', dest = 'AURORAOS', default = False,
 		help = 'build for Aurora OS [default: %(default)s]')
 
+	grp.add_option('--auroraorgname', action = 'store', dest = 'AURORAOS_ORGNAME', default = 'org.example',
+		help = 'Aurora OS package organisation segment used to compose sandbox paths '
+			'(~/.local/share/<org>/<app>, ~/.cache/<org>/<app>, ~/.config/<org>/<app>) '
+			'[default: %(default)s]')
+
+	grp.add_option('--auroraappname', action = 'store', dest = 'AURORAOS_APPNAME', default = 'xash',
+		help = 'Aurora OS package application segment for sandbox paths [default: %(default)s]')
+
 	for i in SUBDIRS:
 		if not i.is_exists(opt):
 			continue
@@ -325,6 +333,8 @@ def configure(conf):
 	if conf.options.AURORAOS:
 		conf.env.AURORAOS = True
 		conf.define('XASH_AURORAOS', 1)
+		conf.define('XASH_AURORAOS_ORGNAME', conf.options.AURORAOS_ORGNAME)
+		conf.define('XASH_AURORAOS_APPNAME', conf.options.AURORAOS_APPNAME)
 		linkflags.append('-lGLESv2')
 		linkflags.append('-lwayland-client')
 		# AuroraOS uses GLES3

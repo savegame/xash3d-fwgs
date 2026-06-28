@@ -108,7 +108,11 @@ qboolean SNDDMA_Init( void )
 	// even if we don't have PA
 	// we still can safely set env variables
 	SDL_setenv( "PULSE_PROP_application.name", GI->title, 1 );
+#ifdef XASH_AURORAOS
+	SDL_setenv( "PULSE_PROP_media.role", "x-maemo", 1 );
+#else
 	SDL_setenv( "PULSE_PROP_media.role", "game", 1 );
+#endif
 
 	// reinitialize SDL with our driver just in case
 	if( SDL_WasInit( SDL_INIT_AUDIO ))
