@@ -101,15 +101,13 @@ static const char *fbo_frag_src =
 	"precision mediump float;\n"
 	"#endif\n"
 	"uniform sampler2D u_tex;\n"
-	"uniform float u_gamma;       // screen gamma (e.g. 2.5)\n"
-	"uniform float u_brightness;  // additive brightness in [-1..1]\n"
 	"varying vec2 v_uv;\n"
 	"void main(){\n"
-	"  vec4 c = texture2D(u_tex, v_uv);\n"
-	"  // apply screen gamma (mirrors engine's screengammatable)\n"
-	"  c.rgb = pow(max(c.rgb, vec3(0.0)), vec3(1.0 / u_gamma));\n"
-	"  c.rgb = clamp(c.rgb + vec3(u_brightness), 0.0, 1.0);\n"
-	"  gl_FragColor = c;\n"
+	"  // xash bakes gamma into textures at upload time via texgammatable;\n"
+	"  // do NOT apply an extra gamma curve at composite or the picture\n"
+	"  // gets washed out. If the on-device image is still too dark, the\n"
+	"  // fault is somewhere in the texture upload path on gles3compat.\n"
+	"  gl_FragColor = texture2D(u_tex, v_uv);\n"
 	"}\n";
 
 static GLhandleARB FBO_CompileShader( GLenum type, const char *src )
@@ -165,8 +163,8 @@ static qboolean FBO_BuildProgram( void )
 	fs.a_uv  = 1;
 	fs.u_mvp = glGetUniformLocation( p, "u_mvp" );
 	fs.u_tex = glGetUniformLocation( p, "u_tex" );
-	fs.u_gamma      = glGetUniformLocation( p, "u_gamma" );
-	fs.u_brightness = glGetUniformLocation( p, "u_brightness" );
+	fs.u_gamma      = -1;
+	fs.u_brightness = -1;
 
 	// Mali GLES3 silently refuses client-array glVertexAttribPointer (no
 	// error, no draw). Allocate our own VBO + VAO so the quad always goes
@@ -515,19 +513,6 @@ void R_FBO_Composite( void )
 	glActiveTexture( GL_TEXTURE0 );
 	glBindTexture( GL_TEXTURE_2D, fs.scene.color );
 	glUniform1i( fs.u_tex, 0 );
-
-	// Pull gamma/brightness from the engine's shared "gamma" and
-	// "brightness" cvars. Applied post-scene so it acts on the full
-	// composite (3D + HUD) — same effect the desktop screengammatable
-	// used to give on the CRT era.
-	{
-		float gamma      = gEngfuncs.pfnGetCvarFloat( "gamma" );
-		float brightness = gEngfuncs.pfnGetCvarFloat( "brightness" );
-		if( gamma < 0.1f ) gamma = 2.5f;
-		if( fs.u_gamma      >= 0 ) glUniform1f( fs.u_gamma,      gamma );
-		if( fs.u_brightness >= 0 ) glUniform1f( fs.u_brightness, brightness );
-	}
-
 	glBindVertexArray( fs.vao );
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 
