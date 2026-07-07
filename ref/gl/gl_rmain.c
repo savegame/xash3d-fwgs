@@ -1081,14 +1081,11 @@ void R_BeginFrame( qboolean clearScene )
 
 	if( R_FBO_IsActive() )
 	{
-		// clear both offscreen targets up front so HUD/scene start empty
-		// R_FBO_BindDefault(); // not necessary 
+		// Single-FBO pipeline: 2D + 3D both live in the scene FBO now.
+		// One clear at the start of the frame is enough.
 		R_FBO_BindScene();
 		pglClearColor( 0.f, 0.f, 0.f, 1.f );
 		pglClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-		R_FBO_Bind2D();
-		pglClearColor( 0.f, 0.f, 0.f, 0.f );
-		pglClear( GL_COLOR_BUFFER_BIT );
 	}
 	else if(( gl_clear->value || ENGINE_GET_PARM( PARM_DEV_OVERVIEW )) &&
 		clearScene && ENGINE_GET_PARM( PARM_CONNSTATE ) != ca_cinematic )

@@ -328,8 +328,10 @@ static void FBO_EnsureSize( void )
 	if( fs.scene.w != sw || fs.scene.h != sh )
 		FBO_CreateTarget( &fs.scene, sw, sh, true );
 
-	if( fs.hud.w != hw || fs.hud.h != hh )
-		FBO_CreateTarget( &fs.hud, hw, hh, false );
+	// HUD FBO retired — everything renders into scene now. Fields are
+	// left in place so R_FBO_Shutdown can safely delete an old allocation
+	// if one existed from a previous build.
+	(void)hw; (void)hh;
 }
 
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
@@ -340,7 +342,7 @@ void R_FBO_FrameBegin( void )
 		return;
 
 	FBO_EnsureSize();
-	if( !fs.scene.fbo || !fs.hud.fbo )
+	if( !fs.scene.fbo )
 		return;
 
 	fs.active = true;
@@ -374,20 +376,29 @@ int R_FBO_GetSceneHeight( void )
 void R_FBO_Bind2D( void )
 {
 	if( !fs.active ) return;
-	glBindFramebuffer( GL_FRAMEBUFFER, fs.hud.fbo );
-	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
-	fs.saved_target = fs.hud.fbo;
+	// Single-FBO pipeline: 2D renders into the scene FBO right on top of
+	// the 3D world. Sharing the same target avoids all the alpha/blend
+	// mismatches we had with a separate HUD FBO (HL sprites' bilinear
+	// half-alpha halos, damage vignettes, magenta bleed-through, etc.).
+	// Alpha mask stays the same as during the 3D pass so backbuffer alpha
+	// remains 1.0 for the compositor.
+	glBindFramebuffer( GL_FRAMEBUFFER, fs.scene.fbo );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );
+	fs.saved_target = fs.scene.fbo;
 }
 
 int R_FBO_Get2DWidth( void )
 {
-	if( fs.active && fs.hud.w ) return fs.hud.w;
+	// 2D lives inside scene FBO — return scene dimensions so R_Set2DMode
+	// builds the right ortho/viewport and HUD elements land where they
+	// should on the (possibly r_3d_scale'd) scene texture.
+	if( fs.active && fs.scene.w ) return fs.scene.w;
 	return gpGlobals->width;
 }
 
 int R_FBO_Get2DHeight( void )
 {
-	if( fs.active && fs.hud.h ) return fs.hud.h;
+	if( fs.active && fs.scene.h ) return fs.scene.h;
 	return gpGlobals->height;
 }
 
@@ -498,9 +509,11 @@ void R_FBO_Composite( void )
 
 	FBO_MakeRotMatrix( mvp, tr.rotation );
 
-	// 1) scene — opaque
+	// Single quad — scene FBO already contains 3D + HUD composited together
+	// by the game itself. No second HUD-quad pass, no HUD-specific blend
+	// hacks, no alpha halos around HL HUD sprites.
 	glEnable( GL_BLEND );
-	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
 	glUseProgram( fs.prog );
 	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 	glActiveTexture( GL_TEXTURE0 );
@@ -509,18 +522,12 @@ void R_FBO_Composite( void )
 	glBindVertexArray( fs.vao );
 	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
 
-	// 2) HUD — premultiplied-alpha overlay, same rotation
-	glEnable( GL_BLEND );
-	glBlendFunc( GL_ONE, GL_ONE_MINUS_SRC_ALPHA );
-	glBindTexture( GL_TEXTURE_2D, fs.hud.color );
-	glDrawArrays( GL_TRIANGLE_STRIP, 0, 4 );
-
 	if( !once )
 	{
 		once = 1;
 		FBO_CheckGL( "STEP C: composite" );
-		gEngfuncs.Con_Printf( S_NOTE "FBO[C]: win=%dx%d scene=%ux%u hud=%ux%u rot=%d\n",
-			ww, wh, fs.scene.w, fs.scene.h, fs.hud.w, fs.hud.h, (int)tr.rotation );
+		gEngfuncs.Con_Printf( S_NOTE "FBO[C]: win=%dx%d scene=%ux%u rot=%d\n",
+			ww, wh, fs.scene.w, fs.scene.h, (int)tr.rotation );
 	}
 
 	// restore state for next frame's legacy/shim path
