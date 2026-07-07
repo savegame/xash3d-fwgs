@@ -42,13 +42,8 @@ Later stages will add: resource-path checker, mod selector, About tab.
 #include "backends/imgui_impl_sdl2.h"
 #include "backends/imgui_impl_opengl3.h"
 
-// -- maliit debug panel (remove once wrapper is validated) --
-#include "maliit_client.h"
-// -- /maliit debug panel --
-
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdarg.h>
 #include <string.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -79,203 +74,6 @@ struct PickerState
 };
 
 PickerState g_picker;
-
-// ----------------------------------------------------------------------
-// Maliit debug panel state — remove after wrapper is validated.
-// ----------------------------------------------------------------------
-struct MaliitDbg
-{
-	bool  initialised   = false;
-	bool  init_failed   = false;
-	bool  visible       = false;
-	bool  password_mode = false;
-	int   content_type  = MALIIT_CONTENT_FREE_TEXT;
-	int   area_x = 0, area_y = 0, area_w = 0, area_h = 0;
-	char  input_buf[256] = {0};
-	std::vector<std::string> log; // rolling event log
-};
-MaliitDbg g_maliit;
-
-void MaliitDbgLog( const char *fmt, ... )
-{
-	char buf[512];
-	va_list ap; va_start( ap, fmt );
-	vsnprintf( buf, sizeof( buf ), fmt, ap );
-	va_end( ap );
-	g_maliit.log.emplace_back( buf );
-	if( g_maliit.log.size() > 64 )
-		g_maliit.log.erase( g_maliit.log.begin(),
-			g_maliit.log.begin() + ( g_maliit.log.size() - 64 ));
-}
-
-// Maliit callbacks — run on the same thread that calls maliit_client_pump.
-void MaliitDbg_OnCommit( void *, const char *utf8, int32_t rs, int32_t rl, int32_t cp )
-{
-	MaliitDbgLog( "commit: '%s' rs=%d rl=%d cp=%d", utf8, rs, rl, cp );
-	// Append committed text to the input buffer for visual feedback.
-	size_t used = strlen( g_maliit.input_buf );
-	size_t room = sizeof( g_maliit.input_buf ) - 1 - used;
-	if( room > 0 )
-		strncat( g_maliit.input_buf, utf8, room );
-}
-
-void MaliitDbg_OnPreedit( void *, const char *utf8, int32_t rs, int32_t rl, int32_t cp )
-{
-	MaliitDbgLog( "preedit: '%s' rs=%d rl=%d cp=%d", utf8, rs, rl, cp );
-}
-
-void MaliitDbg_OnKey( void *, int type, int qtkey, int mods, const char *text,
-                      bool autorep, int32_t count )
-{
-	MaliitDbgLog( "key: type=%d key=0x%x mods=0x%x text='%s' rep=%d cnt=%d",
-		type, qtkey, mods, text, autorep, count );
-	// Qt::Key_Backspace = 0x01000003 — react to it here for visual feedback.
-	if( type == MALIIT_KEY_PRESS && qtkey == 0x01000003 )
-	{
-		size_t n = strlen( g_maliit.input_buf );
-		if( n > 0 ) g_maliit.input_buf[n-1] = '\0';
-	}
-}
-
-void MaliitDbg_OnVisibility( void *, bool v )
-{
-	MaliitDbgLog( "visibility: %s", v ? "shown" : "hidden" );
-	g_maliit.visible = v;
-}
-
-void MaliitDbg_OnArea( void *, int32_t x, int32_t y, int32_t w, int32_t h )
-{
-	MaliitDbgLog( "area: x=%d y=%d w=%d h=%d", x, y, w, h );
-	g_maliit.area_x = x; g_maliit.area_y = y;
-	g_maliit.area_w = w; g_maliit.area_h = h;
-}
-
-void MaliitDbg_Init( void )
-{
-	maliit_callbacks_t cb = {};
-	cb.commit_string  = MaliitDbg_OnCommit;
-	cb.preedit_string = MaliitDbg_OnPreedit;
-	cb.key_event      = MaliitDbg_OnKey;
-	cb.visibility     = MaliitDbg_OnVisibility;
-	cb.area_changed   = MaliitDbg_OnArea;
-	if( maliit_client_init( &cb ))
-	{
-		g_maliit.initialised = true;
-		MaliitDbgLog( "maliit_client_init: OK" );
-	}
-	else
-	{
-		g_maliit.init_failed = true;
-		MaliitDbgLog( "maliit_client_init: FAILED (server unreachable)" );
-	}
-}
-
-void MaliitDbg_Shutdown( void )
-{
-	if( g_maliit.initialised )
-		maliit_client_shutdown();
-	g_maliit.initialised = false;
-}
-
-void MaliitDbg_Pump( void )
-{
-	if( g_maliit.initialised )
-		maliit_client_pump();
-}
-
-void DrawTab_Maliit( void )
-{
-	const float fs = ImGui::GetFontSize();
-
-	if( g_maliit.init_failed )
-	{
-		ImGui::TextColored( ImVec4( 1, 0.4f, 0.4f, 1 ),
-			"maliit-server недоступен — проверь MALIIT_SERVER_ADDRESS "
-			"или что maliit-server запущен." );
-	}
-	else if( !g_maliit.initialised )
-	{
-		ImGui::TextUnformatted( "maliit-client не инициализирован." );
-	}
-	else
-	{
-		ImGui::TextColored( ImVec4( 0.4f, 0.9f, 0.4f, 1 ),
-			"maliit-client готов. Клавиатура: %s.",
-			g_maliit.visible ? "показана" : "скрыта" );
-	}
-
-	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
-
-	ImGui::TextUnformatted( "Тест ввода:" );
-	if( ImGui::InputText( "##maliit_input", g_maliit.input_buf,
-	                      sizeof( g_maliit.input_buf )))
-	{
-		// User edited via physical keyboard — nothing to do; the buffer
-		// is the source of truth for commits from the IM as well.
-	}
-	// When the input field gets keyboard focus, tell maliit we want text.
-	if( ImGui::IsItemActivated() && g_maliit.initialised )
-	{
-		maliit_client_focus_in();
-		maliit_client_show();
-	}
-	if( ImGui::IsItemDeactivated() && g_maliit.initialised )
-	{
-		maliit_client_focus_out();
-		maliit_client_hide();
-	}
-
-	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
-
-	if( ImGui::Button( "Показать клавиатуру" ))
-		if( g_maliit.initialised ) maliit_client_show();
-	ImGui::SameLine();
-	if( ImGui::Button( "Скрыть клавиатуру" ))
-		if( g_maliit.initialised ) maliit_client_hide();
-	ImGui::SameLine();
-	if( ImGui::Button( "Reset IM" ))
-		if( g_maliit.initialised ) maliit_client_reset();
-
-	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
-
-	if( ImGui::Checkbox( "Password mode (hidden + no predict)",
-	                     &g_maliit.password_mode ))
-	{
-		if( g_maliit.initialised )
-		{
-			maliit_client_set_password_mode( g_maliit.password_mode );
-			maliit_client_focus_in(); // flush new settings
-		}
-	}
-
-	const char *ct_names[] = { "FreeText", "Number", "Phone", "Email", "URL", "Custom" };
-	if( ImGui::Combo( "Content type", &g_maliit.content_type,
-	                  ct_names, IM_ARRAYSIZE( ct_names )))
-	{
-		if( g_maliit.initialised )
-		{
-			maliit_client_set_content_type(
-				(maliit_content_type_t)g_maliit.content_type );
-			maliit_client_focus_in();
-		}
-	}
-
-	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
-	ImGui::Text( "IM area: %d,%d %dx%d",
-		g_maliit.area_x, g_maliit.area_y,
-		g_maliit.area_w, g_maliit.area_h );
-
-	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
-	ImGui::TextUnformatted( "Event log:" );
-	ImGui::BeginChild( "##maliit_log", ImVec2( 0, fs * 12.f ), true );
-	for( const auto &line : g_maliit.log )
-		ImGui::TextUnformatted( line.c_str() );
-	if( ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.f )
-		ImGui::SetScrollHereY( 1.0f );
-	ImGui::EndChild();
-
-	if( ImGui::Button( "Clear log" )) g_maliit.log.clear();
-}
 
 // SDL touch-drag → ImGui scroll. We DO NOT translate finger motion into
 // mouse motion (would cause buttons to drag-select). Instead a drag
@@ -833,11 +631,6 @@ void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
 			DrawTab_About();
 			ImGui::EndTabItem();
 		}
-		if( ImGui::BeginTabItem( "Maliit" ))
-		{
-			DrawTab_Maliit();
-			ImGui::EndTabItem();
-		}
 		ImGui::EndTabBar();
 	}
 
@@ -963,12 +756,8 @@ launcher_result_t Launcher_Run( void )
 	bool keep_running = true;
 	bool user_quit    = false;
 
-	MaliitDbg_Init();
-
 	while( keep_running )
 	{
-		MaliitDbg_Pump();
-
 		int win_w = 0, win_h = 0;
 		SDL_GetWindowSize( g_window, &win_w, &win_h );
 
@@ -1071,8 +860,6 @@ launcher_result_t Launcher_Run( void )
 		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 		SDL_GL_SwapWindow( g_window );
 	}
-
-	MaliitDbg_Shutdown();
 
 	// Tear down ImGui — it releases its own VAO/VBO/program/font texture.
 	// The SDL window and GL context stay alive and become the engine's.
