@@ -351,6 +351,11 @@ void R_FBO_BindScene( void )
 {
 	if( !fs.active ) return;
 	glBindFramebuffer( GL_FRAMEBUFFER, fs.scene.fbo );
+	// Lock alpha at 1.0 across the whole 3D pass. Studio models and various
+	// world shaders output whatever alpha they feel like (often 0), which
+	// otherwise leaks into the backbuffer and the Wayland compositor sees
+	// the window as translucent through those pixels.
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );
 	fs.saved_target = fs.scene.fbo;
 }
 
@@ -370,6 +375,7 @@ void R_FBO_Bind2D( void )
 {
 	if( !fs.active ) return;
 	glBindFramebuffer( GL_FRAMEBUFFER, fs.hud.fbo );
+	glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
 	fs.saved_target = fs.hud.fbo;
 }
 
@@ -493,9 +499,8 @@ void R_FBO_Composite( void )
 	FBO_MakeRotMatrix( mvp, tr.rotation );
 
 	// 1) scene — opaque
-	glDisable( GL_BLEND );
-	// glClearColor(0.0, 0.0, 0.0, 1.0);
-	// glClear(GL_COLOR_BUFFER_BIT);
+	glEnable( GL_BLEND );
+	glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 	glUseProgram( fs.prog );
 	glUniformMatrix4fv( fs.u_mvp, 1, GL_FALSE, mvp );
 	glActiveTexture( GL_TEXTURE0 );
