@@ -248,6 +248,18 @@ void VID_Init( void )
 	Cvar_RegisterVariable( &vid_scale );
 #ifdef XASH_AURORAOS
 	Cvar_RegisterVariable( &r_3d_scale );
+	// Pick up the value the launcher hands us. This runs before
+	// VID_SetMode/VID_SetDisplayTransform consults the cvar, so the
+	// scaled render_w/h is already correct on the very first frame.
+	{
+		const char *env = getenv( "XASH3D_R_3D_SCALE" );
+		if( env && *env )
+		{
+			float v = (float)atof( env );
+			if( v >= 0.1f && v <= 4.0f )
+				Cvar_DirectSetValue( &r_3d_scale, v );
+		}
+	}
 #endif
 	Cvar_RegisterVariable( &vid_fullscreen );
 	Cvar_RegisterVariable( &vid_maximized );

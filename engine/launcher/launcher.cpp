@@ -185,25 +185,70 @@ void MakeDirsP( const std::string &path )
 
 std::string ConfigFile() { return ConfigDir() + "/launcher.conf"; }
 
-std::string LoadConfigPath()
+// launcher.conf is a trivial key=value store, one entry per line.
+// Recognised keys:
+//   path       — last picked resource root
+//   r_3d_scale — offscreen render scale factor
+struct LauncherSettings
 {
-	FILE *f = fopen( ConfigFile().c_str(), "rb" );
-	if( !f ) return std::string();
-	char buf[4096] = {0};
-	size_t n = fread( buf, 1, sizeof( buf ) - 1, f );
-	fclose( f );
-	while( n > 0 && ( buf[n-1] == '\n' || buf[n-1] == '\r' || buf[n-1] == ' ' )) --n;
-	return std::string( buf, n );
+	std::string path;
+	float       r_3d_scale = 0.5f;
+};
+
+LauncherSettings g_settings;
+
+std::string TrimStr( const std::string &s )
+{
+	size_t a = 0, b = s.size();
+	while( a < b && ( s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n' )) ++a;
+	while( b > a && ( s[b-1] == ' ' || s[b-1] == '\t' || s[b-1] == '\r' || s[b-1] == '\n' )) --b;
+	return s.substr( a, b - a );
 }
 
-void SaveConfigPath( const std::string &p )
+void LoadSettings()
+{
+	FILE *f = fopen( ConfigFile().c_str(), "rb" );
+	if( !f ) return;
+	char line[4096];
+	// First-line backwards compat: if the file predates key=value it was a
+	// bare path. Detect by absence of '='.
+	while( fgets( line, sizeof( line ), f ))
+	{
+		std::string s = TrimStr( line );
+		if( s.empty() || s[0] == '#' ) continue;
+		size_t eq = s.find( '=' );
+		if( eq == std::string::npos )
+		{
+			// legacy bare-path file
+			g_settings.path = s;
+			continue;
+		}
+		std::string k = TrimStr( s.substr( 0, eq ));
+		std::string v = TrimStr( s.substr( eq + 1 ));
+		if( k == "path" )       g_settings.path = v;
+		else if( k == "r_3d_scale" ) g_settings.r_3d_scale = (float)atof( v.c_str());
+	}
+	fclose( f );
+	if( g_settings.r_3d_scale < 0.25f ) g_settings.r_3d_scale = 0.25f;
+	if( g_settings.r_3d_scale > 2.0f )  g_settings.r_3d_scale = 2.0f;
+}
+
+void SaveSettings()
 {
 	MakeDirsP( ConfigDir());
 	FILE *f = fopen( ConfigFile().c_str(), "wb" );
 	if( !f ) return;
-	fwrite( p.data(), 1, p.size(), f );
-	fputc( '\n', f );
+	fprintf( f, "path=%s\n",       g_settings.path.c_str());
+	fprintf( f, "r_3d_scale=%.3f\n", g_settings.r_3d_scale );
 	fclose( f );
+}
+
+// Backwards-compat wrappers used by the picker.
+std::string LoadConfigPath() { return g_settings.path; }
+void SaveConfigPath( const std::string &p )
+{
+	g_settings.path = p;
+	SaveSettings();
 }
 
 // Best-effort fallback when no config saved yet.
@@ -481,6 +526,42 @@ void DrawTab_Game( bool &keep_running, bool &user_quit, int win_w, int win_h )
 	}
 }
 
+void DrawTab_Settings()
+{
+	const float fs = ImGui::GetFontSize();
+
+	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
+	ImGui::TextWrapped( "Разрешение рендера (3D scale)" );
+	ImGui::TextWrapped(
+		"Множитель размера FBO относительно окна. 0.5 = половина разрешения "
+		"(быстрее), 1.0 = полное, 2.0 = supersample. Меняется на следующем "
+		"запуске игры." );
+	ImGui::Dummy( ImVec2( 0, fs * 0.5f ));
+
+	ImGui::PushItemWidth( -fs * 4.f );
+	ImGui::SliderFloat( "##r_3d_scale", &g_settings.r_3d_scale, 0.25f, 2.0f, "%.2f" );
+	ImGui::PopItemWidth();
+
+	ImGui::Spacing();
+	// Snap to sensible steps via preset buttons — big finger targets.
+	const float btn_h = fs * 3.f;
+	const float btn_w = (( ImGui::GetContentRegionAvail().x - fs * 2.f ) / 5.f );
+	auto preset = [&]( const char *label, float value )
+	{
+		if( ImGui::Button( label, ImVec2( btn_w, btn_h )))
+			g_settings.r_3d_scale = value;
+	};
+	preset( "0.25", 0.25f ); ImGui::SameLine();
+	preset( "0.50", 0.50f ); ImGui::SameLine();
+	preset( "0.75", 0.75f ); ImGui::SameLine();
+	preset( "1.0",  1.00f ); ImGui::SameLine();
+	preset( "2.0",  2.00f );
+
+	ImGui::Dummy( ImVec2( 0, fs ));
+	ImGui::TextColored( ImVec4( 0.6f, 0.8f, 1.f, 1.f ),
+		"Текущее значение: %.2f", g_settings.r_3d_scale );
+}
+
 void DrawTab_About()
 {
 	// Bump font size for the disclaimer block so it reads well at arm's
@@ -538,6 +619,11 @@ void DrawLauncherUI( bool &keep_running, bool &user_quit, int win_w, int win_h )
 		if( ImGui::BeginTabItem( "Игра" ))
 		{
 			DrawTab_Game( keep_running, user_quit, win_w, win_h );
+			ImGui::EndTabItem();
+		}
+		if( ImGui::BeginTabItem( "Настройки" ))
+		{
+			DrawTab_Settings();
 			ImGui::EndTabItem();
 		}
 		if( ImGui::BeginTabItem( "О программе" ))
@@ -655,8 +741,9 @@ launcher_result_t Launcher_Run( void )
 	ImGui_ImplSDL2_InitForOpenGL( g_window, g_context );
 	ImGui_ImplOpenGL3_Init( "#version 300 es" );
 
-	// Prefill the picker from the last saved config if it still points at a
-	// valid resource root.
+	// Load persisted settings (path + r_3d_scale). Prefill the picker if
+	// the saved path still points at a valid resource root.
+	LoadSettings();
 	{
 		std::string saved = LoadConfigPath();
 		if( !saved.empty() && ValidateResourceDir( saved ))
@@ -719,9 +806,18 @@ launcher_result_t Launcher_Run( void )
 	{
 		setenv( "XASH3D_BASEDIR", g_picker.selected.c_str(), 1 );
 		// setenv( "XASH3D_RODIR",   g_picker.selected.c_str(), 1 );
-		// XASH3D_RODIR set as -rodir flag in desktop Exec 
+		// XASH3D_RODIR set as -rodir flag in desktop Exec
 		(void)chdir( g_picker.selected.c_str());
-		SaveConfigPath( g_picker.selected );
+		g_settings.path = g_picker.selected;
+		SaveSettings();
+
+		// Hand r_3d_scale to the engine via env var; picked up in
+		// vid_common.c right after Cvar_RegisterVariable(&r_3d_scale).
+		{
+			char buf[32];
+			snprintf( buf, sizeof( buf ), "%.3f", g_settings.r_3d_scale );
+			setenv( "XASH3D_R_3D_SCALE", buf, 1 );
+		}
 	}
 
 	// Show a single "LOADING" frame before we hand control to the engine.
