@@ -23,6 +23,9 @@ GNU General Public License for more details.
 #include "sound.h"
 #include "vid_common.h"
 #include "ref_common.h"
+#if XASH_AURORAOS
+#include "maliit_bridge.h"
+#endif
 
 static struct
 {
@@ -146,6 +149,9 @@ SDLash_EnableTextInput
 void Platform_EnableTextInput( qboolean enable )
 {
 	enable ? SDL_StartTextInput() : SDL_StopTextInput();
+#if XASH_AURORAOS
+	maliit_bridge_enable_text_input( enable ? true : false );
+#endif
 }
 
 #endif // !XASH_PSVITA

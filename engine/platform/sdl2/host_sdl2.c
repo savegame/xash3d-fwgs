@@ -28,6 +28,7 @@ GNU General Public License for more details.
 #ifdef XASH_AURORAOS
 #include <wayland-client.h>
 #include <SDL_syswm.h>
+#include "maliit_bridge.h"
 #endif
 
 #ifdef XASH_AURORAOS
@@ -617,6 +618,10 @@ SDLash_RunEvents
 void Platform_RunEvents( void )
 {
 	SDL_Event event;
+
+#if XASH_AURORAOS
+	maliit_bridge_pump();
+#endif
 
 	while( host.status != HOST_CRASHED && !host.shutdown_issued && SDL_PollEvent( &event ) )
 		SDLash_EventHandler( &event );
