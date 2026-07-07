@@ -63,11 +63,11 @@ static const char CTX_INTROSPECTION_XML[] =
 	"      <arg name='cursorPos'       type='i' direction='in'/>"
 	"    </method>"
 	"    <method name='updatePreedit'>"
-	"      <arg name='string'          type='s'     direction='in'/>"
-	"      <arg name='formatList'      type='a(iii)' direction='in'/>"
-	"      <arg name='replaceStart'    type='i'     direction='in'/>"
-	"      <arg name='replaceLength'   type='i'     direction='in'/>"
-	"      <arg name='cursorPos'       type='i'     direction='in'/>"
+	"      <arg name='string'          type='s' direction='in'/>"
+	"      <arg name='formatList'      type='v' direction='in'/>"
+	"      <arg name='replaceStart'    type='i' direction='in'/>"
+	"      <arg name='replaceLength'   type='i' direction='in'/>"
+	"      <arg name='cursorPos'       type='i' direction='in'/>"
 	"    </method>"
 	"    <method name='keyEvent'>"
 	"      <arg name='type'            type='i' direction='in'/>"
@@ -76,7 +76,7 @@ static const char CTX_INTROSPECTION_XML[] =
 	"      <arg name='text'            type='s' direction='in'/>"
 	"      <arg name='autoRepeat'      type='b' direction='in'/>"
 	"      <arg name='count'           type='i' direction='in'/>"
-	"      <arg name='requestType'     type='i' direction='in'/>"
+	"      <arg name='requestType'     type='y' direction='in'/>"
 	"    </method>"
 	"    <method name='updateInputMethodArea'>"
 	"      <arg name='x' type='i' direction='in'/>"
@@ -107,14 +107,19 @@ static const char CTX_INTROSPECTION_XML[] =
 	"      <arg name='attribute'  type='s' direction='in'/>"
 	"      <arg name='value'      type='v' direction='in'/>"
 	"    </method>"
-	"    <method name='copy'/>"
-	"    <method name='paste'/>"
 	"    <method name='preeditRectangle'>"
+	"      <arg name='valid' type='b' direction='out'/>"
 	"      <arg name='x'     type='i' direction='out'/>"
 	"      <arg name='y'     type='i' direction='out'/>"
 	"      <arg name='w'     type='i' direction='out'/>"
 	"      <arg name='h'     type='i' direction='out'/>"
-	"      <arg name='valid' type='b' direction='out'/>"
+	"    </method>"
+	"    <method name='selection'>"
+	"      <arg name='valid'   type='b' direction='out'/>"
+	"      <arg name='content' type='s' direction='out'/>"
+	"    </method>"
+	"    <method name='pluginSettingsLoaded'>"
+	"      <arg name='settings' type='v' direction='in'/>"
 	"    </method>"
 	"  </interface>"
 	"</node>";
@@ -220,7 +225,7 @@ static void ctx_method_call( GDBusConnection      *connection,
 		const gchar *s = NULL;
 		GVariant *formats = NULL;
 		gint32 rs = 0, rl = 0, cp = -1;
-		g_variant_get( parameters, "(&s@a(iii)iii)",
+		g_variant_get( parameters, "(&svii i)",
 			&s, &formats, &rs, &rl, &cp );
 		if( formats ) g_variant_unref( formats );
 		if( g.cb.preedit_string )
@@ -231,10 +236,11 @@ static void ctx_method_call( GDBusConnection      *connection,
 
 	if( g_str_equal( method_name, "keyEvent" ) )
 	{
-		gint32 type, key, mods, count, req;
+		gint32 type, key, mods, count;
 		const gchar *text = NULL;
 		gboolean autorep;
-		g_variant_get( parameters, "(iii&sbii)",
+		guchar req = 0;
+		g_variant_get( parameters, "(iii&sbiy)",
 			&type, &key, &mods, &text, &autorep, &count, &req );
 		if( g.cb.key_event )
 			g.cb.key_event( g.cb.user_data, type, key, mods,
@@ -265,9 +271,17 @@ static void ctx_method_call( GDBusConnection      *connection,
 
 	if( g_str_equal( method_name, "preeditRectangle" ) )
 	{
-		/* We don't track a preedit rect; report invalid. */
+		/* Return (valid=false, 0,0,0,0) — we don't track a preedit rect. */
 		g_dbus_method_invocation_return_value( invocation,
-			g_variant_new( "(iiiib)", 0, 0, 0, 0, FALSE ) );
+			g_variant_new( "(biiii)", FALSE, 0, 0, 0, 0 ) );
+		return;
+	}
+
+	if( g_str_equal( method_name, "selection" ) )
+	{
+		/* Return (valid=false, ""). */
+		g_dbus_method_invocation_return_value( invocation,
+			g_variant_new( "(bs)", FALSE, "" ) );
 		return;
 	}
 
@@ -438,7 +452,7 @@ void maliit_client_focus_in( void )
 	g.focused = TRUE;
 	server_call( "activateContext", NULL );
 	server_call( "updateWidgetInformation",
-		g_variant_new( "(@a{sv}b)", build_widget_state(), TRUE ) );
+		g_variant_new( "(vb)", build_widget_state(), TRUE ) );
 }
 
 void maliit_client_focus_out( void )
@@ -446,7 +460,7 @@ void maliit_client_focus_out( void )
 	if( !g.ready ) return;
 	g.focused = FALSE;
 	server_call( "updateWidgetInformation",
-		g_variant_new( "(@a{sv}b)", build_widget_state(), TRUE ) );
+		g_variant_new( "(vb)", build_widget_state(), TRUE ) );
 }
 
 void maliit_client_show( void )
@@ -502,5 +516,5 @@ void maliit_client_set_surrounding_text( const char *text, int32_t cursor_pos )
 	g_variant_builder_add( &b, "{sv}", "cursorPosition",
 		g_variant_new_int32( cursor_pos ) );
 	server_call( "updateWidgetInformation",
-		g_variant_new( "(@a{sv}b)", g_variant_builder_end( &b ), FALSE ) );
+		g_variant_new( "(vb)", g_variant_builder_end( &b ), FALSE ) );
 }
