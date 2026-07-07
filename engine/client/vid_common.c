@@ -23,6 +23,14 @@ GNU General Public License for more details.
 static CVAR_DEFINE_AUTO( vid_mode, "0", FCVAR_RENDERINFO, "current video mode index (used only for storage)" );
 static CVAR_DEFINE_AUTO( vid_rotate, "0", FCVAR_RENDERINFO|FCVAR_VIDRESTART, "screen rotation (0-3)" );
 static CVAR_DEFINE_AUTO( vid_scale, "1.0", FCVAR_RENDERINFO|FCVAR_VIDRESTART, "pixel scale" );
+#ifdef XASH_AURORAOS
+// Applied on top of vid_scale as an extra logical-to-physical multiplier
+// for the offscreen render target. Lets the engine and game DLL live in
+// FBO coordinates while only the composite/input layers know about the
+// real window size.
+static CVAR_DEFINE_AUTO( r_3d_scale, "0.5", FCVAR_ARCHIVE|FCVAR_VIDRESTART,
+	"3D/HUD render buffer scale relative to window (0.5 = half-res, 2.0 = supersample)" );
+#endif
 
 CVAR_DEFINE_AUTO( vid_maximized, "0", FCVAR_RENDERINFO, "window maximized state, read-only" );
 CVAR_DEFINE( vid_fullscreen, "fullscreen", DEFAULT_FULLSCREEN, FCVAR_RENDERINFO|FCVAR_VIDRESTART, "fullscreen state (0 windowed, 1 fullscreen, 2 borderless)" );
@@ -167,6 +175,21 @@ void VID_SetDisplayTransform( int *render_w, int *render_h )
 		// natively, but other platforms still expect the divide here.
 		*render_h /= vid_scale.value;
 		*render_w /= vid_scale.value;
+#else
+		// AuroraOS: single-FBO pipeline. The engine and the game DLL both
+		// see the render buffer as "the screen"; the actual window pixels
+		// only matter at composite time (final blit) and in the SDL input
+		// layer (which maps window taps into FBO coords via refState.scale_*).
+		// Shrink render_w/h by r_3d_scale so refState.width/height ends up
+		// as scene FBO dimensions.
+		{
+			float s = r_3d_scale.value > 0.1f ? r_3d_scale.value : 1.0f;
+			if( s > 4.0f ) s = 4.0f;
+			*render_w = (int)( *render_w * s + 0.5f );
+			*render_h = (int)( *render_h * s + 0.5f );
+			if( *render_w < 64 ) *render_w = 64;
+			if( *render_h < 64 ) *render_h = 64;
+		}
 #endif
 
 		ref.rotation = rotate;
@@ -223,6 +246,9 @@ void VID_Init( void )
 	Cvar_RegisterVariable( &vid_mode );
 	Cvar_RegisterVariable( &vid_rotate );
 	Cvar_RegisterVariable( &vid_scale );
+#ifdef XASH_AURORAOS
+	Cvar_RegisterVariable( &r_3d_scale );
+#endif
 	Cvar_RegisterVariable( &vid_fullscreen );
 	Cvar_RegisterVariable( &vid_maximized );
 	Cvar_RegisterVariable( &vid_width );

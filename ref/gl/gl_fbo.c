@@ -48,7 +48,9 @@ identical to upstream.
 */
 
 static cvar_t *gl_fbo;
-static cvar_t *r_3d_scale;     // resolution multiplier for the 3D scene FBO
+// r_3d_scale is owned by the engine (vid_common.c) now — it is applied
+// inside VID_SetDisplayTransform so refState.width/height already carries
+// the scaled scene FBO dimensions by the time we see it here.
 
 typedef struct fbo_target_s
 {
@@ -261,9 +263,6 @@ void R_FBO_Init( void )
 
 	gl_fbo = gEngfuncs.Cvar_Get( "gl_fbo", "1", FCVAR_ARCHIVE,
 		"render via offscreen FBO (1 = on, 0 = legacy direct rendering)" );
-	r_3d_scale = gEngfuncs.Cvar_Get( "r_3d_scale", "0.5", FCVAR_ARCHIVE,
-		"3D scene buffer scale relative to window (e.g. 0.5 = half-res 3D, 2.0 = supersample). HUD is always at native res." );
-
 	if( !FBO_BuildProgram( ))
 	{
 		gEngfuncs.Cvar_Set( "gl_fbo", "0" );
@@ -309,29 +308,16 @@ void R_FBO_BindDefault( void )
 
 static void FBO_EnsureSize( void )
 {
-	// HUD always at logical render resolution (= window long/short edge
-	// in landscape orientation after VID_SetDisplayTransform swap) so the
-	// 2D ortho is pixel-perfect. Scene FBO is multiplied by r_3d_scale —
-	// 0.5 to halve cost on weak GPUs, >1 to supersample. Composite
-	// quad-samples scene with GL_LINEAR so up/downscale is implicit.
-	int hw = gpGlobals->width;
-	int hh = gpGlobals->height;
-	float s = ( r_3d_scale && r_3d_scale->value > 0.1f ) ? r_3d_scale->value : 1.0f;
-	int sw, sh;
-
-	if( s > 4.0f ) s = 4.0f; // clamp to keep VRAM bounded
-	sw = (int)( hw * s + 0.5f );
-	sh = (int)( hh * s + 0.5f );
-	if( sw < 64 ) sw = 64;
-	if( sh < 64 ) sh = 64;
+	// Scene FBO size = refState.width/height directly. VID_SetDisplayTransform
+	// has already applied both the rotation swap and the r_3d_scale multiplier
+	// on the engine side, so gpGlobals->width/height IS the scene FBO
+	// dimensions. Composite/input layers translate to/from window pixels via
+	// refState.window_width/height and refState.scale_x/y.
+	int sw = gpGlobals->width;
+	int sh = gpGlobals->height;
 
 	if( fs.scene.w != sw || fs.scene.h != sh )
 		FBO_CreateTarget( &fs.scene, sw, sh, true );
-
-	// HUD FBO retired — everything renders into scene now. Fields are
-	// left in place so R_FBO_Shutdown can safely delete an old allocation
-	// if one existed from a previous build.
-	(void)hw; (void)hh;
 }
 
 // Called at the start of every frame. Caches gl_fbo and (re)allocates targets.
