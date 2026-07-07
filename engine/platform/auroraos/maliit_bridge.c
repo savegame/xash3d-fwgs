@@ -145,7 +145,18 @@ void maliit_bridge_shutdown( void )
 
 void maliit_bridge_pump( void )
 {
-	if( s.inited ) maliit_client_pump();
+	if( !s.inited ) return;
+	maliit_client_pump();
+
+	/*
+	 * Some engine paths (VGui menu close on Enter, key_dest flip to
+	 * key_game, ESC-out of a dialog) drop the text-input state without
+	 * routing back through Platform_EnableTextInput. Trust SDL's own
+	 * flag as the source of truth and hide the OSK whenever it turned
+	 * off behind our back.
+	 */
+	if( s.text_active && !SDL_IsTextInputActive())
+		maliit_bridge_enable_text_input( false );
 }
 
 void maliit_bridge_enable_text_input( bool enable )
