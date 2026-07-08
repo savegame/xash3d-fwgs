@@ -430,7 +430,7 @@ void DrawDirectoryBrowser( int win_w, int win_h )
 	ImGui::TextWrapped( "%s", g_picker.current_dir.c_str());
 	ImGui::Spacing();
 
-	const float row_h = fs * 3.f;
+	const float row_h = fs * 2.5f;
 
 	// Action buttons span the full width of the browser window and stack
 	// vertically — fits any phone orientation without horizontal overflow.
@@ -454,7 +454,7 @@ void DrawDirectoryBrowser( int win_w, int win_h )
 	auto subs = ListSubdirs( g_picker.current_dir );
 	for( const auto &name : subs )
 	{
-		if( ImGui::Button( name.c_str(), ImVec2( -1, row_h )))
+		if( ImGui::Button( name.c_str(), ImVec2( -1, row_h * 0.9 )))
 		{
 			std::string next = g_picker.current_dir;
 			if( next != "/" ) next += "/";
@@ -570,7 +570,8 @@ void DrawTab_About()
 
 	ImGui::TextWrapped(
 		"Xash3D-FWGS — open-source реимплементация движка GoldSrc от Valve.\n\n"
-		"Этот порт собран для AuroraOS / SailfishOS." );
+		"Этот порт собран для AuroraOS разработчиком @sashikknox.\n"
+		"Новости о новых портах и играх для AuroraOS в телеграм канале @auroraosgames" );
 	ImGui::Spacing();
 	ImGui::Separator();
 	ImGui::Spacing();
@@ -587,7 +588,7 @@ void DrawTab_About()
 	ImGui::TextWrapped(
 		"Сторонние компоненты:\n"
 		"  Dear ImGui (c) Omar Cornut, MIT license\n"
-		"  imfilebrowser.h (c) AirGuanZ, MIT license (если используется)" );
+		"" );
 
 	ImGui::SetWindowFontScale( 1.0f );
 }

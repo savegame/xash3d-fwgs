@@ -16,6 +16,10 @@ GNU General Public License for more details.
 #include <SDL.h>
 #include "platform.h"
 #include "platform_sdl2.h"
+#if XASH_AURORAOS
+#include "maliit_bridge.h"
+#include "aurora_mce.h"
+#endif
 
 #if XASH_TIMER == TIMER_SDL
 double Platform_DoubleTime( void )
@@ -147,12 +151,21 @@ void SDLash_Init( void )
 
 	SDLash_InitCursors();
 	SDLash_InitSensors();
+
+#if XASH_AURORAOS
+	aurora_mce_init();
+#endif
 }
 
 void SDLash_Shutdown( void )
 {
 	SDLash_ShutdownSensors();
 	SDLash_FreeCursors();
+
+#if XASH_AURORAOS
+	maliit_bridge_shutdown();
+	aurora_mce_shutdown();
+#endif
 
 	SDL_Quit();
 }
