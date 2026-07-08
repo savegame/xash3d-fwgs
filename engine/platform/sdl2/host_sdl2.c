@@ -29,6 +29,7 @@ GNU General Public License for more details.
 #include <wayland-client.h>
 #include <SDL_syswm.h>
 #include "maliit_bridge.h"
+#include "aurora_mce.h"
 #endif
 
 #ifdef XASH_AURORAOS
@@ -375,6 +376,10 @@ static void SDLash_ActiveEvent( int gain )
 		host.force_draw_version_time = host.realtime + FORCE_DRAW_VERSION_TIME;
 		if( vid_fullscreen.value == WINDOW_MODE_FULLSCREEN )
 			VID_SetMode();
+
+#if XASH_AURORAOS
+		aurora_mce_set_prevent_blanking( true );
+#endif
 	}
 	else
 	{
@@ -388,6 +393,10 @@ static void SDLash_ActiveEvent( int gain )
 
 		host.force_draw_version_time = host.realtime + 2.0;
 		VID_RestoreScreenResolution( (window_mode_t)vid_fullscreen.value );
+
+#if XASH_AURORAOS
+		aurora_mce_set_prevent_blanking( false );
+#endif
 	}
 }
 
@@ -621,6 +630,7 @@ void Platform_RunEvents( void )
 
 #if XASH_AURORAOS
 	maliit_bridge_pump();
+	aurora_mce_pump();
 #endif
 
 	while( host.status != HOST_CRASHED && !host.shutdown_issued && SDL_PollEvent( &event ) )
