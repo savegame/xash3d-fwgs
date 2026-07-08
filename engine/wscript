@@ -308,6 +308,7 @@ def build(bld):
 					'launcher/imgui/backends/imgui_impl_opengl3.cpp',
 					'platform/auroraos/maliit_client.c',
 					'platform/auroraos/maliit_bridge.c',
+					'platform/auroraos/aurora_mce.c',
 				]
 				includes += ['launcher', 'launcher/imgui', 'platform/auroraos']
 				defines += ['IMGUI_IMPL_OPENGL_ES3=1']
